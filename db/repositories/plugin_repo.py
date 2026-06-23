@@ -7,6 +7,7 @@ import logging
 import re
 import time
 
+from sqlalchemy import MetaData
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import inspect, insert as sa_insert, select, text as sa_text
 from sqlalchemy import update as sa_update
@@ -131,20 +132,33 @@ def record_migration(plugin_id: str, version: int) -> None:
 
 
 def drop_plugin_tables(plugin_id: str) -> list[str]:
-    """Drop every table whose name starts with ``plugin_<id>_``. Returns dropped names."""
+    """Drop every table whose name starts with ``plugin_<id>_``. Returns dropped names.
+
+    Reflects the targets into a ``MetaData`` and drops them in foreign-key
+    dependency order (children before parents). A naive per-table ``DROP TABLE``
+    in alphabetical order fails on Postgres when a plugin table references
+    another (e.g. ``..._events`` -> ``..._calendars``).
+
+    Only the prefixed plugin tables are dropped: ``reflect`` may pull a
+    FK-referenced CORE table (e.g. ``contacts``) into the MetaData, so we pass an
+    explicit ``tables=`` list to ``drop_all`` — never dropping anything outside
+    ``plugin_<id>_``.
+    """
     engine = get_engine()
     prefix = f"plugin_{plugin_id}_"
     insp = inspect(engine)
-    all_tables = insp.get_table_names()
-    targets = [t for t in all_tables if t.startswith(prefix)]
-    dropped: list[str] = []
-    with engine.begin() as conn:
-        for name in targets:
-            # Guard against any name that wouldn't match our strict allow-list,
-            # so a maliciously crafted ``plugin_id`` cannot smuggle SQL through.
-            if not _SAFE_NAME_RE.match(name):
-                logger.warning("Refusing to drop suspicious table name: %s", name)
-                continue
-            conn.execute(sa_text(f'DROP TABLE IF EXISTS "{name}"'))
-            dropped.append(name)
-    return dropped
+    # Guard against any name that wouldn't match our strict allow-list, so a
+    # maliciously crafted ``plugin_id`` cannot smuggle SQL through.
+    targets = [
+        t for t in insp.get_table_names()
+        if t.startswith(prefix) and _SAFE_NAME_RE.match(t)
+    ]
+    if not targets:
+        return []
+    md = MetaData()
+    md.reflect(bind=engine, only=targets)
+    # Restrict to the target tables only — reflect can drag in referenced core
+    # tables, which must NEVER be dropped. drop_all still orders by FK deps.
+    to_drop = [md.tables[t] for t in targets if t in md.tables]
+    md.drop_all(bind=engine, tables=to_drop)  # FK-ordered, dialect-aware
+    return [t.name for t in to_drop]

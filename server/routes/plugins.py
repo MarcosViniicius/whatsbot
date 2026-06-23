@@ -113,13 +113,16 @@ def register_routes(app, deps):
 
         def _do_delete() -> dict:
             target = plugins_dir / plugin_id
-            had_dir = target.is_dir()
-            if had_dir:
-                shutil.rmtree(target)
+            # DB cleanup first (the parts most likely to fail); only remove the
+            # folder once it succeeds, so an error leaves a retry-able state
+            # instead of a vanished plugin with orphaned tables.
             dropped = plugin_repo.drop_plugin_tables(plugin_id)
             plugin_repo.delete(plugin_id)
             config_repo.delete_prefix(f"plugin.{plugin_id}.")
             overrides_removed = tool_override_repo.delete_for_plugin(plugin_id)
+            had_dir = target.is_dir()
+            if had_dir:
+                shutil.rmtree(target)
             return {
                 "folder_removed": had_dir,
                 "tables_dropped": dropped,
