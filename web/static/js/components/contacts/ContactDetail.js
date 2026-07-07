@@ -47,6 +47,8 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
   const [aiReplyInChat, setAiReplyInChat] = useState(true);
   // pendingMedia: { type: 'image'|'audio', file, blob, filename, previewUrl }
   const [pendingMedia, setPendingMedia] = useState(null);
+  // Optional caption typed in the media-preview overlay (image/document only).
+  const [mediaCaption, setMediaCaption] = useState('');
   // Group @mention autocomplete: list of participants + open menu state.
   const [members, setMembers] = useState([]);
   // mentionMenu: { query, start (index of '@' in input), index (highlighted) } | null
@@ -602,12 +604,15 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
   function cancelPendingMedia() {
     if (pendingMedia?.previewUrl) URL.revokeObjectURL(pendingMedia.previewUrl);
     setPendingMedia(null);
+    setMediaCaption('');
   }
 
   async function confirmPendingMedia() {
     if (!pendingMedia || sending) return;
     const media = pendingMedia;
+    const caption = mediaCaption.trim();
     setPendingMedia(null);
+    setMediaCaption('');
     setSending(true);
 
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -622,13 +627,14 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
 
     let optimistic, sendPromise;
     if (media.type === 'image') {
-      optimistic = { ...base, content: '', media_type: 'image', media_path: localUrl };
-      sendPromise = _api.sendImage(phone, media.file);
+      optimistic = { ...base, content: caption, media_type: 'image', media_path: localUrl };
+      sendPromise = _api.sendImage(phone, media.file, caption);
     } else if (media.type === 'document') {
       const verb = sandbox ? 'recebido' : 'enviado';
-      optimistic = { ...base, content: `[Documento ${verb}: ${media.filename}]`,
+      const docLabel = `[Documento ${verb}: ${media.filename}]`;
+      optimistic = { ...base, content: caption ? `${docLabel}\n${caption}` : docLabel,
                      media_type: 'document', media_path: localUrl };
-      sendPromise = _api.sendDocument(phone, media.file);
+      sendPromise = _api.sendDocument(phone, media.file, caption);
     } else {
       optimistic = { ...base, content: '[Áudio]', media_type: 'audio', media_path: localUrl };
       sendPromise = _api.sendAudio(phone, media.blob, media.filename);
@@ -1117,6 +1123,17 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
               <${AudioPlayer} src=${pendingMedia.previewUrl} isLocalBlob=${true} />
             </div>
           `}
+          ${pendingMedia.type !== 'audio' ? html`
+            <input
+              type="text"
+              value=${mediaCaption}
+              onInput=${e => setMediaCaption(e.target.value)}
+              onKeyDown=${e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); confirmPendingMedia(); } }}
+              placeholder="Adicionar uma legenda (opcional)"
+              autofocus
+              class="wa-field w-full max-w-[420px] px-[12px] py-[8px] rounded-[8px] text-[14px] border border-wa-border outline-none focus:border-wa-teal"
+            />
+          ` : ''}
           <div class="flex gap-[12px]">
             <button
               type="button"
