@@ -114,11 +114,11 @@ def register_routes(app, deps):
             pass
 
     def _save_upload(upload: UploadFile, content: bytes, default_name: str) -> str:
-        """Persist an uploaded file under statics/senditems and return its rel path."""
+        """Persist an uploaded file under statics/operator and return its rel path."""
         suffix = Path(upload.filename or default_name).suffix or Path(default_name).suffix
         dest = statics_senditems_dir / f"{int(time.time() * 1000)}{suffix}"
         dest.write_bytes(content)
-        return f"statics/senditems/{dest.name}"
+        return f"statics/operator/{dest.name}"
 
     @app.post("/api/sandbox/send")
     async def sandbox_send(body: dict):

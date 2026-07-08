@@ -78,7 +78,14 @@ def create_app(
     # Prepare statics directories
     statics_dir = settings.data_dir / "statics"
     statics_media_dir = statics_dir / "media"
-    statics_senditems_dir = statics_dir / "senditems"
+    # Operator-sent media (image/audio/document uploaded from the panel) is
+    # persisted here. This MUST NOT be GOWA's own working folder: GOWA runs with
+    # cwd=project root and uses ``statics/senditems`` for outgoing sends, saving
+    # the uploaded file under the multipart filename and RemoveFile-ing it after
+    # send — which would delete our persisted copy (images/audio broke on
+    # refresh). Keeping operator media in a separate ``statics/operator`` folder
+    # that GOWA never touches avoids the collision.
+    statics_senditems_dir = statics_dir / "operator"
     statics_media_dir.mkdir(parents=True, exist_ok=True)
     statics_senditems_dir.mkdir(parents=True, exist_ok=True)
 

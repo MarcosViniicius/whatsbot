@@ -14,6 +14,8 @@ from __future__ import annotations
 import dataclasses
 import importlib.util
 import logging
+import os
+import re
 import shutil
 import sys
 import traceback
@@ -22,7 +24,7 @@ from types import ModuleType
 
 from db.repositories import plugin_repo
 
-from plugins import pkg_deps
+from plugins import dep_check, pkg_deps
 from plugins.manifest import PluginManifest, find_manifest_file, load_manifest
 from plugins.migrator import run_pending_migrations
 
@@ -97,12 +99,61 @@ def bootstrap_initial_plugins(plugins_dir: Path, source_dir: Path) -> list[str]:
     return copied
 
 
+_UPDATE_TMP_RE = re.compile(r"^\.(?P<pid>[a-z][a-z0-9_]{0,31})\.update-(?P<kind>staging|backup)$")
+
+
+def _recover_interrupted_updates(plugins_dir: Path) -> None:
+    """Heal a plugin folder swap that a hard crash interrupted (review finding #1).
+
+    ``server.routes.plugins._swap_plugin_dir`` replaces a plugin in two renames:
+    ``pid`` → ``.pid.update-backup``, then ``.pid.update-staging`` → ``pid``. A
+    process kill (OOM, power loss, a concurrent ``os._exit`` from
+    ``schedule_restart``) BETWEEN those two renames leaves ``pid`` gone with the
+    code stranded in the dot-dirs — which discovery skips — so the plugin would
+    silently vanish from disk with no auto-restore. On the next boot we recover:
+
+    * ``pid`` missing + staging present → promote staging (update all but finished).
+    * ``pid`` missing + only backup     → restore backup (revert to old code).
+    * ``pid`` present                   → drop any leftover staging/backup.
+    """
+    if not plugins_dir.is_dir():
+        return
+    pids: set[str] = set()
+    for child in plugins_dir.iterdir():
+        m = _UPDATE_TMP_RE.match(child.name)
+        if m and child.is_dir():
+            pids.add(m.group("pid"))
+    for pid in pids:
+        target = plugins_dir / pid
+        staging = plugins_dir / f".{pid}.update-staging"
+        backup = plugins_dir / f".{pid}.update-backup"
+        if target.is_dir():
+            shutil.rmtree(staging, ignore_errors=True)
+            shutil.rmtree(backup, ignore_errors=True)
+            continue
+        source = staging if staging.is_dir() else (backup if backup.is_dir() else None)
+        if source is None:
+            continue
+        try:
+            os.replace(source, target)
+            logger.warning("Recovered interrupted plugin update: %s -> %s/%s",
+                           source.name, plugins_dir.name, pid)
+        except OSError as e:
+            logger.error("Could not recover interrupted update for %s: %s", pid, e)
+            continue
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(backup, ignore_errors=True)
+
+
 def discover_and_load(plugins_dir: Path) -> PluginRegistry:
     """Scan ``plugins_dir``, sync DB, run migrations and import enabled plugins."""
     registry = PluginRegistry()
     if not plugins_dir.is_dir():
         plugins_dir.mkdir(parents=True, exist_ok=True)
         logger.info("Created plugins directory: %s", plugins_dir)
+
+    # Before discovery: finish/revert any plugin update a crash left half-swapped.
+    _recover_interrupted_updates(plugins_dir)
 
     for child in sorted(plugins_dir.iterdir()):
         if not child.is_dir():
@@ -143,7 +194,7 @@ def _process_one(plugin_dir: Path, registry: PluginRegistry) -> None:
         return
 
     try:
-        _ensure_plugin_deps(manifest, db_row)
+        _ensure_plugin_deps(manifest, plugin_dir, db_row)
         loaded = _load_plugin_module(manifest, plugin_dir)
         run_pending_migrations(manifest, plugin_dir)
         registry.loaded[manifest.id] = loaded
@@ -160,29 +211,82 @@ def _process_one(plugin_dir: Path, registry: PluginRegistry) -> None:
         )
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
+        if isinstance(e, ModuleNotFoundError):
+            try:
+                err = _missing_module_hint(manifest, plugin_dir, e) or err
+            except Exception:  # hint is best-effort; never mask the real error
+                pass
         logger.error("Plugin %s failed to load:\n%s", manifest.id, traceback.format_exc())
         plugin_repo.set_load_error(manifest.id, err)
         registry.discovered[manifest.id].error = err
 
 
-def _ensure_plugin_deps(manifest: PluginManifest, db_row: dict) -> None:
-    """Install the plugin's declared pip ``dependencies`` before importing it.
-
-    Mirrors the code-in-DB AI tool installer: pip only runs the first time the
-    declared spec set changes (cache marker in ``plugins.installed_deps``). Any
-    failure raises and bubbles to ``_process_one``'s handler → ``load_error``,
-    so the plugin is skipped and the app still boots.
-    """
-    deps = manifest.dependencies or []
-    if not deps:
-        return
-    ran = pkg_deps.ensure_pip_deps(
-        deps,
-        already=db_row.get("installed_deps") or [],
-        label=f"plugin '{manifest.id}'",
+def _missing_module_hint(
+    manifest: PluginManifest, plugin_dir: Path, e: ModuleNotFoundError
+) -> str | None:
+    """Turn a raw ``ModuleNotFoundError`` into an actionable message naming the
+    pip package the author should declare (auto-install couldn't satisfy it)."""
+    missing = getattr(e, "name", None)
+    if not missing:
+        return None
+    root = missing.split(".")[0]
+    mods = dep_check.third_party_roots(plugin_dir).get(root, {missing})
+    pkg = dep_check.resolve_package(root, mods)
+    return (
+        f"Dependência faltando: o plugin importa '{missing}' mas o pacote não "
+        f"pôde ser instalado automaticamente. Declare-o em 'dependencies' no "
+        f"plugin.yaml (provável pacote pip: '{pkg}')."
     )
-    if ran:
-        plugin_repo.set_installed_deps(manifest.id, deps)
+
+
+def _ensure_plugin_deps(
+    manifest: PluginManifest, plugin_dir: Path, db_row: dict
+) -> None:
+    """Install the plugin's pip dependencies before importing it.
+
+    Two passes through the :mod:`plugins.pkg_deps` choke point (pip only runs the
+    first time the spec set changes — cache marker in ``plugins.installed_deps``):
+
+    1. The deps **declared** in ``plugin.yaml``.
+    2. Any third-party import the plugin uses but did NOT declare, detected by
+       :mod:`plugins.dep_check` and resolved to a pip package. This self-heals
+       the common "author forgot to declare a dependency" mistake instead of
+       failing with a cryptic ``ModuleNotFoundError``.
+
+    Any failure raises and bubbles to ``_process_one``'s handler → ``load_error``
+    (enriched there for missing modules), so the plugin is skipped and the app
+    still boots.
+
+    In a frozen build (PyInstaller EXE) there is no pip and the auto-heal scan
+    is skipped entirely: declared deps must already be bundled, and probing
+    importability there risks false negatives. This mirrors the pre-existing
+    behaviour — only declared deps were ever installed via pip.
+    """
+    declared = list(manifest.dependencies or [])
+    already = list(db_row.get("installed_deps") or [])
+    # Pass 1: declared deps first, so the scan below doesn't re-flag them.
+    if declared and declared != already:
+        pkg_deps.ensure_pip_deps(
+            declared, already=already, label=f"plugin '{manifest.id}'",
+        )
+        plugin_repo.set_installed_deps(manifest.id, declared)
+        already = declared
+    # Pass 2: auto-heal undeclared third-party imports. Dev/Docker only — never
+    # in frozen builds (no pip; find_spec may misreport bundled modules).
+    if getattr(sys, "frozen", False):
+        return
+    declared_names = {pkg_deps.pkg_name(d).lower() for d in declared}
+    auto = [
+        p for p in dep_check.resolve_runtime_deps(plugin_dir)
+        if pkg_deps.pkg_name(p).lower() not in declared_names
+    ]
+    if not auto:
+        return
+    effective = declared + auto
+    pkg_deps.ensure_pip_deps(
+        effective, already=already, label=f"plugin '{manifest.id}'",
+    )
+    plugin_repo.set_installed_deps(manifest.id, effective)
 
 
 def _load_plugin_module(

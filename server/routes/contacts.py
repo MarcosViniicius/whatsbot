@@ -739,7 +739,7 @@ def register_routes(app, deps):
             state.processed_messages.add(msg_id)
 
         # Relative path for storage and frontend
-        rel_path = f"statics/senditems/{dest.name}"
+        rel_path = f"statics/operator/{dest.name}"
         msg_data = {
             "role": "assistant",
             "content": caption,
@@ -809,7 +809,7 @@ def register_routes(app, deps):
         if msg_id:
             state.processed_messages.add(msg_id)
 
-        rel_path = f"statics/senditems/{dest.name}"
+        rel_path = f"statics/operator/{dest.name}"
         msg_data = {
             "role": "assistant",
             "content": "[Áudio]",
@@ -882,7 +882,7 @@ def register_routes(app, deps):
         if msg_id:
             state.processed_messages.add(msg_id)
 
-        rel_path = f"statics/senditems/{dest.name}"
+        rel_path = f"statics/operator/{dest.name}"
         text_content = f"[Documento enviado: {safe_name}]"
         if caption.strip():
             text_content = f"{text_content}\n{caption.strip()}"
