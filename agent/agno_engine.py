@@ -73,10 +73,14 @@ class EngineResult:
 # --------------------------------------------------------------------------- #
 def build_model(handler, model_id: str | None = None,
                 model_config: dict | None = None) -> OpenAILike:
-    """Build an OpenAILike model pointed at the Techify proxy.
+    """Build an OpenAILike model pointed at the active LLM provider.
 
-    Techify is OpenAI-compatible, so ``OpenAILike`` (id + api_key + base_url) is
-    all AGNO needs. ``telemetry`` is disabled on the Agent/Team, not here.
+    Both the Techify proxy and OpenRouter direct are OpenAI-compatible, so
+    ``OpenAILike`` (id + api_key + base_url) is all AGNO needs regardless of
+    which one is active. ``telemetry`` is disabled on the Agent/Team, not here.
+    ``base_url`` comes from ``handler.base_url`` — resolved per-provider by
+    ``agent.llm_gateway.resolve()`` at every call site that constructs the
+    handler, not hardcoded here (see ``agent/llm_gateway.py``).
 
     ``model_config`` (config-in-DB path) may carry ``model``/``temperature``/
     ``top_p``/``max_tokens``. When absent, behaviour matches the legacy default
@@ -91,7 +95,7 @@ def build_model(handler, model_id: str | None = None,
     return OpenAILike(
         id=mc.get("model") or model_id or handler.model,
         api_key=handler.api_key,
-        base_url=LLM_API_BASE_URL,
+        base_url=getattr(handler, "base_url", None) or LLM_API_BASE_URL,
         max_tokens=mc.get("max_tokens") or _DEFAULT_MAX_TOKENS,
         **extra,
     )

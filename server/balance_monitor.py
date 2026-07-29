@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 
+from agent import llm_gateway
 from config.settings import LLM_API_BASE_URL
 
 logger = logging.getLogger(__name__)
@@ -46,14 +47,19 @@ def set_runtime(ws_manager: Any, loop: asyncio.AbstractEventLoop, settings: Any)
     _settings = settings
 
 
-async def fetch_balance(api_key: str) -> dict | None:
-    """Fetch remaining credit. Returns ``{total_credits, total_usage, remaining}`` or ``None``."""
+async def fetch_balance(api_key: str, base_url: str = LLM_API_BASE_URL) -> dict | None:
+    """Fetch remaining credit. Returns ``{total_credits, total_usage, remaining}`` or ``None``.
+
+    Both providers expose a ``/credits`` endpoint with the same
+    ``{data: {total_credits, total_usage}}`` shape, so ``base_url`` is the only
+    thing that needs to vary — see ``agent/llm_gateway.py``.
+    """
     if not api_key:
         return None
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                f"{LLM_API_BASE_URL}/credits",
+                f"{base_url}/credits",
                 headers={"Authorization": f"Bearer {api_key}"},
             )
             resp.raise_for_status()
@@ -89,10 +95,10 @@ async def _check_and_notify() -> None:
             return
         if not _settings.get("low_balance_enabled", True):
             return
-        api_key = _settings.get("openrouter_api_key", "")
+        provider, base_url, api_key = llm_gateway.resolve(_settings)
         if not api_key:
             return
-        balance = await fetch_balance(api_key)
+        balance = await fetch_balance(api_key, base_url)
         _last_check_ts = now
         if balance is None:
             return
@@ -101,10 +107,13 @@ async def _check_and_notify() -> None:
         if balance["remaining"] < threshold and _ws_manager is not None:
             if now - _last_notify_ts >= _MIN_NOTIFY_INTERVAL:
                 _last_notify_ts = now
+                account_url = _settings.get("account_url", "") or (
+                    "https://openrouter.ai/credits" if provider == "openrouter" else ""
+                )
                 await _ws_manager.broadcast("low_balance", {
                     **balance,
                     "threshold": threshold,
-                    "account_url": _settings.get("account_url", ""),
+                    "account_url": account_url,
                 })
     finally:
         _check_in_flight = False

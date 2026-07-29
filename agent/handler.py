@@ -102,8 +102,17 @@ class AgentHandler:
         pricing_fn=None,
         default_ai_enabled: bool = True,
         ai_engine_enabled: bool = False,
+        base_url: str = LLM_API_BASE_URL,
+        voice_reply_mode: str = "mirror",
+        voice_reply_model: str = "",
+        voice_reply_voice: str = "alloy",
     ):
         self.api_key = api_key
+        # Resolved by agent.llm_gateway.resolve() at every call site that
+        # builds it (server/routes/config.py, main.py, server/dev.py) — lets
+        # the active LLM provider (Techify proxy vs OpenRouter direct) change
+        # without touching this class beyond this one attribute.
+        self.base_url = base_url
         self.system_prompt = system_prompt
         self.max_context_messages = max_context_messages
         self.inactivity_timeout = inactivity_timeout_min * 60
@@ -113,6 +122,10 @@ class AgentHandler:
         self.audio_model = audio_model
         self.image_model = image_model
         self.document_model = document_model
+        # Resposta em áudio (TTS) — ver synthesize_speech() abaixo.
+        self.voice_reply_mode = voice_reply_mode
+        self.voice_reply_model = voice_reply_model
+        self.voice_reply_voice = voice_reply_voice
         self.default_ai_enabled = default_ai_enabled
         # When True, prompt/model/tools are resolved per-request from the DB
         # (config-in-DB, see agent.agent_factory) instead of the in-code values.
@@ -391,17 +404,19 @@ class AgentHandler:
             pass
 
     def _get_client(self) -> OpenAI:
-        if self._client is None or self._client.api_key != self.api_key:
+        if (self._client is None or self._client.api_key != self.api_key
+                or str(self._client.base_url).rstrip("/") != self.base_url.rstrip("/")):
             self._client = OpenAI(
-                base_url=LLM_API_BASE_URL,
+                base_url=self.base_url,
                 api_key=self.api_key,
             )
         return self._client
 
     def _get_async_client(self) -> AsyncOpenAI:
-        if self._async_client is None or self._async_client.api_key != self.api_key:
+        if (self._async_client is None or self._async_client.api_key != self.api_key
+                or str(self._async_client.base_url).rstrip("/") != self.base_url.rstrip("/")):
             self._async_client = AsyncOpenAI(
-                base_url=LLM_API_BASE_URL,
+                base_url=self.base_url,
                 api_key=self.api_key,
             )
         return self._async_client
@@ -420,7 +435,15 @@ class AgentHandler:
         split_messages: bool | None = None,
         default_ai_enabled: bool | None = None,
         ai_engine_enabled: bool | None = None,
+        base_url: str | None = None,
+        voice_reply_mode: str | None = None,
+        voice_reply_model: str | None = None,
+        voice_reply_voice: str | None = None,
     ):
+        if base_url is not None and base_url != self.base_url:
+            self.base_url = base_url
+            self._client = None
+            self._async_client = None
         if api_key is not None:
             self.api_key = api_key
             self._client = None
@@ -441,6 +464,12 @@ class AgentHandler:
             self.image_model = image_model
         if document_model is not None:
             self.document_model = document_model
+        if voice_reply_mode is not None:
+            self.voice_reply_mode = voice_reply_mode
+        if voice_reply_model is not None:
+            self.voice_reply_model = voice_reply_model
+        if voice_reply_voice is not None:
+            self.voice_reply_voice = voice_reply_voice
         if split_messages is not None:
             self.split_messages = split_messages
         if default_ai_enabled is not None:
@@ -504,6 +533,37 @@ class AgentHandler:
             logger.error("Audio transcription failed: %s", e)
             track_step("error", {"error": str(e), "phase": "audio_transcription"}, status="error")
             return ""
+
+    def synthesize_speech(self, text: str, phone: str = "") -> bytes | None:
+        """Generate speech audio for ``text`` via the configured TTS model.
+
+        Uses the standard OpenAI-compatible ``audio.speech`` endpoint (also
+        exposed by OpenRouter at ``/audio/speech`` — see
+        ``agent/llm_gateway.py`` for base_url/api_key resolution). Returns
+        ``None`` on any failure — no API key, no model configured, or the
+        active provider/model not supporting TTS — so callers always have a
+        clean fallback to a text reply instead of crashing the send path.
+        """
+        if not self.api_key or not self.voice_reply_model or not text.strip():
+            return None
+        try:
+            client = self._get_client()
+            response = client.audio.speech.create(
+                model=self.voice_reply_model,
+                voice=self.voice_reply_voice or "alloy",
+                input=text,
+                response_format="mp3",
+            )
+            data = response.content
+            track_step("media_processed", {
+                "type": "tts", "model": self.voice_reply_model, "chars": len(text),
+            })
+            logger.info("Speech synthesized (%d bytes) for %s", len(data), phone)
+            return data
+        except Exception as e:
+            logger.warning("TTS synthesis failed (model=%s): %s", self.voice_reply_model, e)
+            track_step("error", {"error": str(e), "phase": "tts_synthesis"}, status="error")
+            return None
 
     def describe_image(self, image_path: str, phone: str = "") -> str:
         """Describe an image using the configured image model."""
@@ -828,6 +888,12 @@ class AgentHandler:
             "pedir, e redija a resposta ao contato. Caso contrário, use as notas "
             "apenas como contexto, sem citar, mencionar ou parafrasear em "
             "respostas ao contato."
+            "\n\nMensagens marcadas com '[Transcrição do áudio]: ...' são áudios "
+            "que o cliente mandou — o texto após o prefixo já é a transcrição "
+            "automática e fiel do que ele disse. Trate esse texto exatamente "
+            "como se o cliente tivesse digitado (extraia pedido, responda "
+            "dúvidas, etc.). NUNCA diga que só aceita pedidos por texto ou peça "
+            "para o cliente reenviar por escrito — o áudio já foi entendido."
         )
 
         # Plugin-contributed prompt fragments. Each fragment is a callable that
@@ -1305,11 +1371,11 @@ class AgentHandler:
                 return ProcessResult(reply="[WhatsBot] Limite de requisições atingido. Tente novamente em instantes.")
             return ProcessResult(reply="[WhatsBot] Erro ao processar mensagem. Tente novamente.")
 
-    def test_api_key(self, api_key: str) -> tuple[bool, str]:
-        """Test if an API key is valid."""
+    def test_api_key(self, api_key: str, base_url: str | None = None) -> tuple[bool, str]:
+        """Test if an API key is valid against the given (or currently active) provider."""
         try:
             client = OpenAI(
-                base_url=LLM_API_BASE_URL,
+                base_url=base_url or self.base_url,
                 api_key=api_key,
             )
             client.chat.completions.create(

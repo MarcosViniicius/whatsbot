@@ -18,6 +18,13 @@ LLM_API_BASE_URL = os.environ.get(
     "LLM_API_BASE_URL", "https://llm.techify.one/api/v1"
 ).rstrip("/")
 
+# OpenRouter direct API base URL — selectable as an alternative to the Techify
+# proxy above via the ``llm_provider`` config key. See ``agent/llm_gateway.py``
+# for the single choke point that resolves (provider, base_url, api_key).
+OPENROUTER_DIRECT_BASE_URL = os.environ.get(
+    "OPENROUTER_DIRECT_BASE_URL", "https://openrouter.ai/api/v1"
+).rstrip("/")
+
 # Techify account provisioning — used by the first-run setup wizard. The
 # WhatsBot fetches the current provisioning number from TECHIFY_SERVICE_NUMBER_URL
 # and sends a WhatsApp message to it, Techify creates an account + API key, and
@@ -37,6 +44,8 @@ TECHIFY_PROVISION_MESSAGE = "Quero Criar conta e receber minha Chave de API"
 
 _ENV_OVERRIDES: dict[str, tuple[str, Callable[[str], Any]]] = {
     "OPENROUTER_API_KEY": ("openrouter_api_key", str),
+    "WHATSBOT_LLM_PROVIDER": ("llm_provider", str),
+    "OPENROUTER_DIRECT_API_KEY": ("openrouter_direct_api_key", str),
     "WHATSBOT_MODEL": ("model", str),
     "WHATSBOT_IMPROVEMENT_MODEL": ("improvement_model", str),
     "WHATSBOT_AUDIO_MODEL": ("audio_model", str),
@@ -49,6 +58,8 @@ _ENV_OVERRIDES: dict[str, tuple[str, Callable[[str], Any]]] = {
     "WHATSBOT_MAX_CONTEXT": ("max_context_messages", int),
     "WHATSBOT_BATCH_DELAY": ("message_batch_delay", float),
     "WHATSBOT_AI_ENGINE": ("ai_engine_enabled", lambda v: v.lower() in ("1", "true", "yes")),
+    "WHATSBOT_AI_AUTO_RESUME": ("ai_auto_resume_enabled", lambda v: v.lower() in ("1", "true", "yes")),
+    "WHATSBOT_AI_AUTO_RESUME_TIMEOUT_MIN": ("ai_auto_resume_timeout_min", int),
 }
 
 # Reverse lookup: config_key -> (env_key, cast). Used by get() to apply env overrides on-demand.
@@ -58,6 +69,12 @@ _ENV_OVERRIDES_BY_KEY: dict[str, tuple[str, Callable[[str], Any]]] = {
 
 DEFAULT_CONFIG = {
     "openrouter_api_key": "",
+    # LLM provider gateway — "techify" (default, Techify proxy provisioned by
+    # the setup wizard) or "openrouter" (OpenRouter direct, own API key below).
+    # See agent/llm_gateway.py — this is the single switch every LLM call site
+    # (agentic + transcription/image/document/improvement) resolves through.
+    "llm_provider": "techify",
+    "openrouter_direct_api_key": "",
     "model": "deepseek/deepseek-v4-pro",
     # Model used by the "sugerir melhoria" analysis (non-agentic). Empty string
     # → falls back to the chat ``model``.
@@ -111,6 +128,21 @@ DEFAULT_CONFIG = {
     # opens a modal pointing to ``account_url`` for the user to recharge.
     "low_balance_enabled": True,
     "low_balance_threshold": 0.50,
+    # Retomada automática da IA — quando um atendente humano assume (ai_enabled
+    # desativado) e some por muito tempo enquanto o cliente segue mandando
+    # mensagem, a IA volta a responder sozinha. Ver server/background.py
+    # (ai_auto_resume_loop) e agent/memory.py (ContactMemory.ai_disabled_at).
+    "ai_auto_resume_enabled": True,
+    "ai_auto_resume_timeout_min": 30,
+    # Resposta em áudio (TTS) — a IA sintetiza voz para a resposta e envia
+    # como nota de voz em vez de texto. "off" nunca sintetiza; "mirror"
+    # (default) só responde em áudio quando o CLIENTE mandou áudio; "always"
+    # sempre tenta áudio primeiro. Requer um modelo TTS disponível no
+    # provider configurado (ver agent/handler.py: synthesize_speech) — sem
+    # voice_reply_model configurado, cai automaticamente pra texto.
+    "voice_reply_mode": "mirror",
+    "voice_reply_model": "",
+    "voice_reply_voice": "alloy",
 }
 
 

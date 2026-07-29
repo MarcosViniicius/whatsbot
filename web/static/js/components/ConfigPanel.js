@@ -22,8 +22,11 @@ function Section({ title, children }) {
 
 export function ConfigPanel({ config, saving, onSave, onNotify }) {
   const [apiKey, setApiKey] = useState('');
+  const [llmProvider, setLlmProvider] = useState('techify');
+  const [openrouterKey, setOpenrouterKey] = useState('');
   const [model, setModel] = useState('');
   const [improvementModel, setImprovementModel] = useState('');
+  const [audioModel, setAudioModel] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [autoReply, setAutoReply] = useState(true);
   const [maxContext, setMaxContext] = useState(10);
@@ -39,6 +42,11 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
   const [transferAlertDuration, setTransferAlertDuration] = useState(5);
   const [lowBalanceEnabled, setLowBalanceEnabled] = useState(true);
   const [lowBalanceThreshold, setLowBalanceThreshold] = useState(0.5);
+  const [aiAutoResumeEnabled, setAiAutoResumeEnabled] = useState(true);
+  const [aiAutoResumeTimeoutMin, setAiAutoResumeTimeoutMin] = useState(30);
+  const [voiceReplyMode, setVoiceReplyMode] = useState('mirror');
+  const [voiceReplyModel, setVoiceReplyModel] = useState('');
+  const [voiceReplyVoice, setVoiceReplyVoice] = useState('alloy');
   const [maxExecutions, setMaxExecutions] = useState(200);
   const [confirmUnreadAll, setConfirmUnreadAll] = useState(false);
   const [markingAllUnread, setMarkingAllUnread] = useState(false);
@@ -81,8 +89,11 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
   useEffect(() => {
     if (config) {
       setApiKey(''); // Don't show masked key in input
+      setOpenrouterKey('');
+      setLlmProvider(config.llm_provider || 'techify');
       setModel(config.model || '');
       setImprovementModel(config.improvement_model || '');
+      setAudioModel(config.audio_model || '');
       setSystemPrompt(config.system_prompt || '');
       setAutoReply(config.auto_reply ?? true);
       setMaxContext(config.max_context_messages ?? 10);
@@ -98,6 +109,11 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       setTransferAlertDuration(config.transfer_alert_duration ?? 5);
       setLowBalanceEnabled(config.low_balance_enabled ?? true);
       setLowBalanceThreshold(config.low_balance_threshold ?? 0.5);
+      setAiAutoResumeEnabled(config.ai_auto_resume_enabled ?? true);
+      setAiAutoResumeTimeoutMin(config.ai_auto_resume_timeout_min ?? 30);
+      setVoiceReplyMode(config.voice_reply_mode ?? 'mirror');
+      setVoiceReplyModel(config.voice_reply_model ?? '');
+      setVoiceReplyVoice(config.voice_reply_voice ?? 'alloy');
       setMaxExecutions(config.max_executions ?? 200);
       setDefaultAiEnabled(config.default_ai_enabled ?? true);
       setGroupReplyMode(config.group_reply_mode ?? 'mention_only');
@@ -106,8 +122,8 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
 
   const [testResult, setTestResult] = useState(null); // {ok, message}
 
-  async function handleTestKey() {
-    const key = apiKey.trim();
+  async function handleTestKey(provider) {
+    const key = (provider === 'openrouter' ? openrouterKey : apiKey).trim();
     if (!key) {
       onNotify('Insira uma API key primeiro.');
       return;
@@ -115,13 +131,15 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await testApiKey(key);
+      const res = await testApiKey(key, provider);
       if (res.ok) {
         setTestResult({ ok: res.data.valid, message: res.data.message });
         onNotify(res.data.message);
-        // Auto-save when key is valid
+        // Auto-save when key is valid — provider-scoped field so testing one
+        // provider's key never clobbers the other's.
         if (res.data.valid) {
-          await onSave({ openrouter_api_key: key });
+          const field = provider === 'openrouter' ? 'openrouter_direct_api_key' : 'openrouter_api_key';
+          await onSave({ [field]: key, llm_provider: llmProvider });
         }
       } else {
         setTestResult({ ok: false, message: res.error || 'Erro ao testar.' });
@@ -190,6 +208,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
     const data = {
       model: model.trim() || 'deepseek/deepseek-v4-pro',
       improvement_model: improvementModel.trim(),
+      audio_model: audioModel.trim() || 'google/gemini-2.5-flash',
       system_prompt: systemPrompt,
       auto_reply: autoReply,
       max_context_messages: parseInt(maxContext, 10) || 10,
@@ -205,13 +224,22 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       transfer_alert_duration: parseInt(transferAlertDuration, 10) || 5,
       low_balance_enabled: lowBalanceEnabled,
       low_balance_threshold: isNaN(parseFloat(lowBalanceThreshold)) ? 0.5 : parseFloat(lowBalanceThreshold),
+      ai_auto_resume_enabled: aiAutoResumeEnabled,
+      ai_auto_resume_timeout_min: parseInt(aiAutoResumeTimeoutMin, 10) || 30,
+      voice_reply_mode: voiceReplyMode,
+      voice_reply_model: voiceReplyModel.trim(),
+      voice_reply_voice: voiceReplyVoice.trim() || 'alloy',
       max_executions: parseInt(maxExecutions, 10) || 200,
       default_ai_enabled: defaultAiEnabled,
       group_reply_mode: groupReplyMode,
+      llm_provider: llmProvider,
     };
     // Only include api_key if user typed a new one
     if (apiKey.trim()) {
       data.openrouter_api_key = apiKey.trim();
+    }
+    if (openrouterKey.trim()) {
+      data.openrouter_direct_api_key = openrouterKey.trim();
     }
     // Handle password change/removal
     if (removePassword) {
@@ -276,37 +304,128 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
           </select>
           <span class="text-xs text-wa-secondary">Vale apenas para grupos com a IA ativada. "Somente quando mencionado" exige um @menção ao bot; "Sempre" responde a qualquer mensagem do grupo.</span>
         </div>
+
+        <div class="flex flex-col gap-3 p-3 bg-wa-panel rounded-lg border border-wa-border">
+          <label class="flex items-center gap-3 text-sm font-semibold text-wa-text cursor-pointer">
+            <input
+              type="checkbox"
+              checked=${aiAutoResumeEnabled}
+              onChange=${(e) => setAiAutoResumeEnabled(e.target.checked)}
+              class="w-4 h-4 rounded border-wa-border accent-wa-teal"
+            />
+            Retomada automática da IA
+          </label>
+          <p class="text-xs text-wa-secondary">
+            Quando um atendente desativa a IA numa conversa (manual ou via transferência) e some, a IA volta a responder sozinha automaticamente — evita conversas "esquecidas" só com atendimento humano.
+          </p>
+          <div class="flex items-center gap-2">
+            <label class="text-sm text-wa-text">Reativar após</label>
+            <input
+              type="number"
+              min="1"
+              max="240"
+              disabled=${!aiAutoResumeEnabled}
+              value=${aiAutoResumeTimeoutMin}
+              onInput=${(e) => setAiAutoResumeTimeoutMin(e.target.value)}
+              class="w-20 bg-wa-bg text-wa-text px-2 py-1 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none disabled:opacity-50"
+            />
+            <span class="text-sm text-wa-text">minutos de inatividade do atendente, se o cliente mandou mensagem nova nesse meio tempo.</span>
+          </div>
+        </div>
       <//>
 
       <!-- Section: API e Modelos -->
       <${Section} title="API e Modelos">
-        <!-- API Key -->
+        <!-- Provider gateway -->
         <div>
-          <label class="block text-sm font-semibold text-wa-text mb-1">Chave de API Techify</label>
-          <div class="flex gap-2">
-            <input
-              type="password"
-              value=${apiKey}
-              onInput=${(e) => setApiKey(e.target.value)}
-              placeholder=${config.openrouter_api_key || 'sk-or-...'}
-              class="flex-1 bg-wa-panel text-wa-text px-3 py-2 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none"
-            />
-            <button
-              onClick=${handleTestKey}
-              disabled=${testing}
-              class="px-4 py-2 bg-wa-panel hover:bg-wa-hover disabled:opacity-50 text-wa-text text-sm rounded-lg transition-colors whitespace-nowrap border border-wa-border"
-            >
-              ${testing ? '...' : 'Testar'}
-            </button>
+          <label class="block text-sm font-semibold text-wa-text mb-1">Provedor de IA</label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label class="flex items-start gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${llmProvider === 'techify' ? 'bg-wa-teal/10 border-wa-teal' : 'bg-wa-panel border-wa-border hover:bg-wa-hover'}">
+              <input
+                type="radio"
+                name="llm_provider"
+                checked=${llmProvider === 'techify'}
+                onChange=${() => setLlmProvider('techify')}
+                class="mt-0.5 accent-wa-teal"
+              />
+              <div class="min-w-0">
+                <div class="text-sm font-semibold text-wa-text">Techify (recomendado)</div>
+                <div class="text-xs text-wa-secondary">Proxy provisionado pelo wizard, cr\u00e9dito gerido pela Techify.</div>
+              </div>
+            </label>
+            <label class="flex items-start gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${llmProvider === 'openrouter' ? 'bg-wa-teal/10 border-wa-teal' : 'bg-wa-panel border-wa-border hover:bg-wa-hover'}">
+              <input
+                type="radio"
+                name="llm_provider"
+                checked=${llmProvider === 'openrouter'}
+                onChange=${() => setLlmProvider('openrouter')}
+                class="mt-0.5 accent-wa-teal"
+              />
+              <div class="min-w-0">
+                <div class="text-sm font-semibold text-wa-text">OpenRouter direto</div>
+                <div class="text-xs text-wa-secondary">Usa sua pr\u00f3pria chave OpenRouter, sem passar pelo proxy Techify.</div>
+              </div>
+            </label>
           </div>
-          ${testResult ? html`
-            <p class="text-xs mt-1 ${testResult.ok ? 'text-green-600' : 'text-red-500'}">
-              ${testResult.ok ? '\u2713' : '\u2717'} ${testResult.message}
-            </p>
-          ` : config.openrouter_api_key ? html`
-            <p class="text-xs mt-1 text-wa-secondary">Chave salva: ${config.openrouter_api_key}</p>
-          ` : null}
         </div>
+
+        <!-- API Key (Techify) -->
+        ${llmProvider === 'techify' ? html`
+          <div>
+            <label class="block text-sm font-semibold text-wa-text mb-1">Chave de API Techify</label>
+            <div class="flex gap-2">
+              <input
+                type="password"
+                value=${apiKey}
+                onInput=${(e) => setApiKey(e.target.value)}
+                placeholder=${config.openrouter_api_key || 'sk-or-...'}
+                class="flex-1 bg-wa-panel text-wa-text px-3 py-2 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none"
+              />
+              <button
+                onClick=${() => handleTestKey('techify')}
+                disabled=${testing}
+                class="px-4 py-2 bg-wa-panel hover:bg-wa-hover disabled:opacity-50 text-wa-text text-sm rounded-lg transition-colors whitespace-nowrap border border-wa-border"
+              >
+                ${testing ? '...' : 'Testar'}
+              </button>
+            </div>
+            ${testResult ? html`
+              <p class="text-xs mt-1 ${testResult.ok ? 'text-green-600' : 'text-red-500'}">
+                ${testResult.ok ? '\u2713' : '\u2717'} ${testResult.message}
+              </p>
+            ` : config.openrouter_api_key ? html`
+              <p class="text-xs mt-1 text-wa-secondary">Chave salva: ${config.openrouter_api_key}</p>
+            ` : null}
+          </div>
+        ` : html`
+          <div>
+            <label class="block text-sm font-semibold text-wa-text mb-1">Chave de API OpenRouter</label>
+            <div class="flex gap-2">
+              <input
+                type="password"
+                value=${openrouterKey}
+                onInput=${(e) => setOpenrouterKey(e.target.value)}
+                placeholder=${config.openrouter_direct_api_key || 'sk-or-v1-...'}
+                class="flex-1 bg-wa-panel text-wa-text px-3 py-2 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none"
+              />
+              <button
+                onClick=${() => handleTestKey('openrouter')}
+                disabled=${testing}
+                class="px-4 py-2 bg-wa-panel hover:bg-wa-hover disabled:opacity-50 text-wa-text text-sm rounded-lg transition-colors whitespace-nowrap border border-wa-border"
+              >
+                ${testing ? '...' : 'Testar'}
+              </button>
+            </div>
+            ${testResult ? html`
+              <p class="text-xs mt-1 ${testResult.ok ? 'text-green-600' : 'text-red-500'}">
+                ${testResult.ok ? '\u2713' : '\u2717'} ${testResult.message}
+              </p>
+            ` : config.openrouter_direct_api_key ? html`
+              <p class="text-xs mt-1 text-wa-secondary">Chave salva: ${config.openrouter_direct_api_key}</p>
+            ` : null}
+            <p class="text-xs mt-1 text-wa-secondary">Obtenha sua chave em openrouter.ai/keys. Recarga e saldo s\u00e3o geridos direto na sua conta OpenRouter.</p>
+          </div>
+        `}
 
         <!-- Improvement model -->
         <div>
@@ -388,6 +507,18 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
         <!-- Audio transcription mode & target -->
         <div class="flex flex-col gap-3 p-3 bg-wa-panel rounded-lg border border-wa-border">
           <div class="text-sm font-semibold text-wa-text">Transcrição de áudio</div>
+
+          <div>
+            <label class="block text-xs font-medium text-wa-text mb-1">Modelo de IA (transcrição)</label>
+            <${ModelSelect}
+              value=${audioModel}
+              onChange=${setAudioModel}
+              filterModality="audio"
+              placeholder="google/gemini-2.5-flash"
+            />
+            <span class="text-xs text-wa-secondary">Precisa aceitar áudio como entrada — a lista já vem filtrada pra mostrar só esses.</span>
+          </div>
+
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="block text-xs font-medium text-wa-text mb-1">Transcrever mensagens</label>
@@ -428,6 +559,56 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
               <span class="text-xs text-wa-secondary">Texto colado antes da transcrição enviada ao chat. Deixe em branco para enviar só o texto.</span>
             </div>
           ` : null}
+        </div>
+
+        <!-- Voice reply (TTS) -->
+        <div class="flex flex-col gap-3 p-3 bg-wa-panel rounded-lg border border-wa-border">
+          <div class="text-sm font-semibold text-wa-text">Resposta em áudio (a IA fala)</div>
+          <p class="text-xs text-wa-secondary">
+            Gera uma nota de voz para a resposta da IA em vez de texto. Requer um modelo de TTS disponível no provedor configurado (ex: <code>openai/tts-1</code>) — se a síntese falhar, cai automaticamente para texto.
+          </p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-wa-text mb-1">Quando responder em áudio</label>
+              <select
+                value=${voiceReplyMode}
+                onChange=${(e) => setVoiceReplyMode(e.target.value)}
+                class="w-full bg-wa-bg text-wa-text px-3 py-2 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none"
+              >
+                <option value="off">Nunca (só texto)</option>
+                <option value="mirror">Espelhar — só quando o cliente manda áudio</option>
+                <option value="always">Sempre que possível</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-wa-text mb-1">Voz</label>
+              <input
+                type="text"
+                value=${voiceReplyVoice}
+                onInput=${(e) => setVoiceReplyVoice(e.target.value)}
+                disabled=${voiceReplyMode === 'off'}
+                placeholder="alloy"
+                class="w-full bg-wa-bg text-wa-text px-3 py-2 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none disabled:opacity-50"
+              />
+              <p class="text-xs text-wa-secondary mt-1">
+                O ID da voz depende do modelo escolhido acima — não é universal.
+                Ex: modelos OpenAI usam "alloy"/"nova"/"shimmer"; o Kokoro-82M usa
+                IDs como "pf_dora" (PT-BR feminina) ou "pm_alex" (PT-BR masculina).
+                Voz errada pro modelo = áudio saindo em outro idioma/sotaque.
+              </p>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-wa-text mb-1">Modelo de TTS</label>
+            <${ModelSelect}
+              value=${voiceReplyModel}
+              onChange=${setVoiceReplyModel}
+              purpose="tts"
+              disabled=${voiceReplyMode === 'off'}
+              placeholder="Selecione um modelo de geração de voz..."
+            />
+            <span class="text-xs text-wa-secondary">Sem um modelo aqui, a resposta em áudio fica desativada mesmo com o modo acima ligado.</span>
+          </div>
         </div>
       <//>
 

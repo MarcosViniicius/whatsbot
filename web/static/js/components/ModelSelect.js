@@ -5,31 +5,32 @@ import { getModels } from '../services/api.js';
 
 const html = htm.bind(h);
 
-// Shared cache across all ModelSelect instances
-let _modelsCache = null;
-let _modelsFetching = false;
-let _modelsFetchCallbacks = [];
+// Shared cache across all ModelSelect instances, keyed by "purpose" (the
+// general chat/vision catalog uses the "default" bucket; purpose="tts" fetches
+// a separately-filtered catalog server-side — see server/routes/config.py).
+const _modelsCache = {};
+const _modelsFetching = {};
+const _modelsFetchCallbacks = {};
 
-async function fetchModelsOnce() {
-  if (_modelsCache) return _modelsCache;
-  if (_modelsFetching) {
-    return new Promise(resolve => _modelsFetchCallbacks.push(resolve));
+async function fetchModelsOnce(purpose) {
+  const key = purpose || 'default';
+  if (_modelsCache[key]) return _modelsCache[key];
+  if (_modelsFetching[key]) {
+    return new Promise(resolve => {
+      (_modelsFetchCallbacks[key] = _modelsFetchCallbacks[key] || []).push(resolve);
+    });
   }
-  _modelsFetching = true;
+  _modelsFetching[key] = true;
   try {
-    const res = await getModels();
-    if (res.ok) {
-      _modelsCache = res.data;
-    } else {
-      _modelsCache = [];
-    }
+    const res = await getModels(purpose);
+    _modelsCache[key] = res.ok ? res.data : [];
   } catch {
-    _modelsCache = [];
+    _modelsCache[key] = [];
   }
-  _modelsFetching = false;
-  _modelsFetchCallbacks.forEach(cb => cb(_modelsCache));
-  _modelsFetchCallbacks = [];
-  return _modelsCache;
+  _modelsFetching[key] = false;
+  (_modelsFetchCallbacks[key] || []).forEach(cb => cb(_modelsCache[key]));
+  _modelsFetchCallbacks[key] = [];
+  return _modelsCache[key];
 }
 
 /**
@@ -37,10 +38,11 @@ async function fetchModelsOnce() {
  * @param {object} props
  * @param {string} props.value - Current model ID
  * @param {function} props.onChange - Called with new model ID
- * @param {string} [props.filterModality] - Filter by input modality ("audio", "image", or null for all)
+ * @param {string} [props.filterModality] - Filter by INPUT modality client-side ("audio", "image", or null for all) — for models that READ that media type (e.g. transcription).
+ * @param {string} [props.purpose] - Fetch a server-side purpose-filtered catalog instead ("tts" = text-to-speech-capable models) — for models that PRODUCE that media type. Mutually exclusive with filterModality.
  * @param {string} [props.placeholder] - Placeholder text
  */
-export function ModelSelect({ value, onChange, filterModality, placeholder }) {
+export function ModelSelect({ value, onChange, filterModality, purpose, placeholder, disabled }) {
   const [models, setModels] = useState([]);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -51,15 +53,15 @@ export function ModelSelect({ value, onChange, filterModality, placeholder }) {
 
   // Load models on first open
   const loadModels = useCallback(async () => {
-    const data = await fetchModelsOnce();
+    const data = await fetchModelsOnce(purpose);
     let filtered = data;
-    if (filterModality) {
+    if (filterModality && !purpose) {
       filtered = data.filter(m =>
         m.input_modalities && m.input_modalities.includes(filterModality)
       );
     }
     setModels(filtered);
-  }, [filterModality]);
+  }, [filterModality, purpose]);
 
   useEffect(() => { loadModels(); }, [loadModels]);
 
@@ -130,10 +132,11 @@ export function ModelSelect({ value, onChange, filterModality, placeholder }) {
         type="text"
         value=${displayValue}
         placeholder=${placeholder || 'Selecione um modelo...'}
+        disabled=${disabled}
         onFocus=${() => { setOpen(true); setQuery(''); }}
         onInput=${(e) => { setQuery(e.target.value); setOpen(true); }}
         onKeyDown=${handleKeyDown}
-        class="w-full bg-wa-panel text-wa-text px-3 py-2 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none"
+        class="w-full bg-wa-panel text-wa-text px-3 py-2 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none disabled:opacity-50"
         title=${value || ''}
       />
       ${open && html`

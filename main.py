@@ -48,6 +48,7 @@ def main():
     from gowa.manager import GOWAManager
     from gowa.client import GOWAClient
     from agent.handler import AgentHandler
+    from agent import llm_gateway
     from server.app import create_app
 
     port = settings.get("gowa_port", 3000)
@@ -57,8 +58,10 @@ def main():
     gowa_manager = GOWAManager(port=port, data_dir=settings.data_dir, webhook_url=webhook_url)
     gowa_client = GOWAClient(port=port)
 
+    _, _llm_base_url, _llm_api_key = llm_gateway.resolve(settings)
     agent_handler = AgentHandler(
-        api_key=settings.get("openrouter_api_key", ""),
+        api_key=_llm_api_key,
+        base_url=_llm_base_url,
         system_prompt=settings.get("system_prompt", "Você é um assistente útil."),
         max_context_messages=settings.get("max_context_messages", 10),
         inactivity_timeout_min=settings.get("inactivity_timeout_min", 30),
@@ -67,6 +70,9 @@ def main():
         audio_model=settings.get("audio_model", "google/gemini-3-flash-preview"),
         image_model=settings.get("image_model", "google/gemini-3-flash-preview"),
         document_model=settings.get("document_model", "google/gemini-2.5-flash"),
+        voice_reply_mode=settings.get("voice_reply_mode", "mirror"),
+        voice_reply_model=settings.get("voice_reply_model", ""),
+        voice_reply_voice=settings.get("voice_reply_voice", "alloy"),
         default_ai_enabled=settings.get("default_ai_enabled", True),
         ai_engine_enabled=settings.get("ai_engine_enabled", False),
     )

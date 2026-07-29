@@ -6,6 +6,7 @@ import time
 
 import httpx
 
+from agent import llm_gateway
 from config.settings import LLM_API_BASE_URL
 from db.repositories import usage_repo, contact_repo
 from server.helpers import _ok
@@ -14,13 +15,14 @@ from server.routes.config import get_models_cache
 logger = logging.getLogger(__name__)
 
 
-def _get_model_pricing(model_id: str, api_key: str = "") -> tuple[float, float]:
+def _get_model_pricing(model_id: str, api_key: str = "", provider: str = "techify") -> tuple[float, float]:
     """Return (prompt_price_per_token, completion_price_per_token) from cache."""
-    _models_cache = get_models_cache()
+    _models_cache = get_models_cache(provider)
     if not _models_cache["data"]:
         try:
+            base_url = llm_gateway.base_url_for(provider)
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-            resp = httpx.get(f"{LLM_API_BASE_URL}/models", headers=headers, timeout=15)
+            resp = httpx.get(f"{base_url}/models", headers=headers, timeout=15)
             resp.raise_for_status()
             raw = resp.json()
             models = []
@@ -64,10 +66,11 @@ def register_routes(app, deps):
     agent_handler = deps.agent_handler
     settings = deps.settings
 
-    # Wire up pricing function — closure captures settings to forward the API key
-    # to the upstream proxy (Techify / OpenRouter-compatible), which requires it.
+    # Wire up pricing function — closure captures settings to forward the active
+    # provider's API key to the upstream proxy, which requires it.
     def pricing_fn(model_id: str) -> tuple[float, float]:
-        return _get_model_pricing(model_id, settings.get("openrouter_api_key", ""))
+        provider, _, api_key = llm_gateway.resolve(settings)
+        return _get_model_pricing(model_id, api_key, provider)
 
     agent_handler.pricing_fn = pricing_fn
 

@@ -46,8 +46,8 @@ export async function saveConfig(config) {
   return request('PUT', '/api/config', config);
 }
 
-export async function testApiKey(apiKey) {
-  return request('POST', '/api/config/test-key', { api_key: apiKey });
+export async function testApiKey(apiKey, provider) {
+  return request('POST', '/api/config/test-key', { api_key: apiKey, provider });
 }
 
 export async function getStatus() {
@@ -157,6 +157,10 @@ export async function archiveContact(phone, archived) {
 
 export async function pinContact(phone, pinned) {
   return request('POST', `/api/contacts/${encodeURIComponent(phone)}/pin`, { pinned });
+}
+
+export async function setConversationStatus(phone, status) {
+  return request('POST', `/api/contacts/${encodeURIComponent(phone)}/conversation-status`, { status });
 }
 
 export async function sendMessage(phone, message, replyTo = null) {
@@ -309,8 +313,9 @@ export async function updateContactTags(phone, tags) {
 
 // ── Models ──────────────────────────────────────────────────────────
 
-export async function getModels() {
-  return request('GET', '/api/models');
+export async function getModels(purpose) {
+  const qs = purpose ? `?purpose=${encodeURIComponent(purpose)}` : '';
+  return request('GET', `/api/models${qs}`);
 }
 
 // ── Logs ───────────────────────────────────────────────────────────
