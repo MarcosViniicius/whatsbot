@@ -6,9 +6,12 @@ ARG TARGETARCH=amd64
 ENV WHATSBOT_DOCKER=1
 ENV PYTHONUNBUFFERED=1
 
-# Install curl and unzip for downloading GOWA
+# curl/unzip: baixar o GOWA. ffmpeg: exigido pelo GOWA pra converter os MP3
+# do TTS (agent/handler.py synthesize_speech) em PTT (voice note) ao mandar
+# via /send/audio — sem ele o envio de áudio cai com HTTP 500 e a resposta
+# em voz volta a ser enviada como texto (ver [Voice] fallback em webhook.py).
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl unzip && \
+    apt-get install -y --no-install-recommends curl unzip ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 # Download and install GOWA binary for Linux

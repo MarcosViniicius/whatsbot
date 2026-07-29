@@ -2,6 +2,7 @@ import { h, render } from 'preact';
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { Dashboard } from './components/Dashboard.js';
+import { OperationalDashboard } from './components/OperationalDashboard.js';
 import { Sandbox } from './components/Sandbox.js';
 import { Contacts } from './components/Contacts.js';
 import { CostsDashboard } from './components/CostsDashboard.js';
@@ -12,6 +13,7 @@ import { PluginScreen } from './components/PluginScreen.js';
 import { ToolsManager } from './components/ToolsManager.js';
 import { SetupWizard } from './components/SetupWizard.js';
 import { LowBalanceModal } from './components/LowBalanceModal.js';
+import { Toast } from './components/Toast.js';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import { useConfig } from './hooks/useConfig.js';
 import { checkAuth, authHeaders, getUnreadCount } from './services/api.js';
@@ -36,8 +38,11 @@ function snoozeLowBalance(ms) {
 const html = htm.bind(h);
 
 // Core (built-in) routes. Plugin screens are merged in dynamically below.
+// '/' is the operational dashboard (home) — the chat list/conversation view
+// moved to '/conversas' to make room for it.
 const CORE_ROUTES = {
-  '/': 'contacts',
+  '/': 'home',
+  '/conversas': 'contacts',
   '/painel': 'dashboard',
   '/sandbox': 'sandbox',
   '/costs': 'costs',
@@ -46,7 +51,8 @@ const CORE_ROUTES = {
   '/tools': 'tools',
 };
 const CORE_TAB_PATHS = {
-  contacts: '/',
+  home: '/',
+  contacts: '/conversas',
   dashboard: '/painel',
   sandbox: '/sandbox',
   costs: '/costs',
@@ -65,7 +71,7 @@ function tabFromPath(pluginScreens) {
   if (path.match(/^\/executions\/\d+$/)) return 'executions';
   const screen = (pluginScreens || []).find(s => s.path === path);
   if (screen) return pluginTabId(screen);
-  return CORE_ROUTES[path] || 'contacts';
+  return CORE_ROUTES[path] || 'home';
 }
 
 function pathForTab(tab, pluginScreens) {
@@ -139,6 +145,12 @@ function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, acco
       </button>
       ${open ? html`
         <div class="absolute right-0 mt-1 bg-wa-bg rounded-lg shadow-lg border border-wa-border py-1 min-w-[180px] max-h-[80vh] overflow-y-auto">
+          <${MenuItem} active=${tab === 'home'} href=${CORE_TAB_PATHS.home} onClick=${() => { onTabChange('home'); close(); }}
+            icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`}
+          >Início</${MenuItem}>
+          <${MenuItem} active=${tab === 'contacts'} href=${CORE_TAB_PATHS.contacts} onClick=${() => { onTabChange('contacts'); close(); }}
+            icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>`}
+          >Conversas</${MenuItem}>
           <${MenuItem} active=${tab === 'dashboard'} href=${CORE_TAB_PATHS.dashboard} onClick=${() => { onTabChange('dashboard'); close(); }}
             icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>`}
           >Painel</${MenuItem}>
@@ -215,6 +227,46 @@ function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, acco
         </div>
       ` : null}
     </div>
+  `;
+}
+
+// Mobile bottom navigation — WhatsApp-style primary tabs, thumb-reachable.
+// A normal flex child (not `fixed`), so it never overlaps content: <main> is
+// flex-1 and shrinks to make room for it automatically. Hidden from `lg` up,
+// where the gear menu + desktop layout are already comfortable.
+function BottomNavItem({ active, onClick, icon, badge, children }) {
+  return html`
+    <button
+      onClick=${onClick}
+      class="flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 relative ${active ? 'text-wa-teal' : 'text-wa-secondary'}"
+    >
+      <span class="relative">
+        ${icon}
+        ${badge ? html`
+          <span class="absolute -top-1 -right-2 min-w-[16px] h-[16px] px-[3px] rounded-full bg-wa-badge text-white text-[10px] font-bold flex items-center justify-center leading-none">${badge > 99 ? '99+' : badge}</span>
+        ` : null}
+      </span>
+      <span class="text-[11px] font-medium leading-none">${children}</span>
+    </button>
+  `;
+}
+
+function BottomNav({ tab, onTabChange, pluginScreens, unreadCount }) {
+  const ordersScreen = (pluginScreens || []).find(s => s.pluginId === 'orders');
+  return html`
+    <nav class="lg:hidden shrink-0 flex items-stretch bg-wa-bg border-t border-wa-border" style="padding-bottom: env(safe-area-inset-bottom)">
+      <${BottomNavItem} active=${tab === 'home'} onClick=${() => onTabChange('home')}
+        icon=${html`<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`}
+      >Início</${BottomNavItem}>
+      <${BottomNavItem} active=${tab === 'contacts'} onClick=${() => onTabChange('contacts')} badge=${unreadCount}
+        icon=${html`<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>`}
+      >Conversas</${BottomNavItem}>
+      ${ordersScreen ? html`
+        <${BottomNavItem} active=${tab === pluginTabId(ordersScreen)} onClick=${() => onTabChange(pluginTabId(ordersScreen))}
+          icon=${html`<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12L8.1 13h7.45c.75 0 1.41-.41 1.75-1.03L20.88 6H4.54l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>`}
+        >Pedidos</${BottomNavItem}>
+      ` : null}
+    </nav>
   `;
 }
 
@@ -489,20 +541,20 @@ function App({ onLogout, hasPassword }) {
     <div class="h-dvh overflow-hidden flex flex-col relative">
       <${GearMenu} tab=${tab} onTabChange=${setTab} pluginScreens=${pluginScreens} hasPassword=${hasPassword} onLogout=${onLogout} accountUrl=${config && config.account_url} />
 
-      <main class="flex-1 min-h-0 overflow-auto ${tab !== 'contacts' ? 'bg-wa-panel' : ''}">
+      <main key=${tab} class="flex-1 min-h-0 overflow-auto wa-tab-enter ${tab !== 'contacts' ? 'bg-wa-panel' : ''}">
         ${activePluginScreen
           ? html`<div class="max-w-5xl mx-auto p-4">
-              <${PageHeader} title=${activePluginScreen.title} onBack=${() => setTab('contacts')} />
+              <${PageHeader} title=${activePluginScreen.title} onBack=${() => setTab('home')} />
               <${PluginScreen} screen=${activePluginScreen} />
             </div>`
           : tab === 'tools'
             ? html`<div class="max-w-5xl mx-auto p-4">
-                <${PageHeader} title="Tools" onBack=${() => setTab('contacts')} />
+                <${PageHeader} title="Tools" onBack=${() => setTab('home')} />
                 <${ToolsManager} />
               </div>`
             : tab === 'plugins'
             ? html`<div class="max-w-5xl mx-auto p-4">
-                <${PageHeader} title="Plugins" onBack=${() => setTab('contacts')} />
+                <${PageHeader} title="Plugins" onBack=${() => setTab('home')} />
                 <${PluginsManager} onPluginsChanged=${() => {
                   fetch('/api/plugins/manifest', { headers: authHeaders() }).then(r => r.json()).then(res => {
                     if (res && res.ok) {
@@ -518,7 +570,7 @@ function App({ onLogout, hasPassword }) {
               </div>`
             : tab === 'dashboard'
               ? html`<div class="max-w-5xl mx-auto p-4">
-                  <${PageHeader} title="Painel" onBack=${() => setTab('contacts')} />
+                  <${PageHeader} title="Painel" onBack=${() => setTab('home')} />
                   <${Dashboard}
                     status=${status}
                     qrAvailable=${qrAvailable}
@@ -530,11 +582,15 @@ function App({ onLogout, hasPassword }) {
                     onReopenSetup=${openWizard}
                   />
                 </div>`
+              : tab === 'home'
+                ? html`<div class="max-w-7xl mx-auto p-4 h-full">
+                    <${OperationalDashboard} pluginScreens=${pluginScreens} newMessage=${newMessage} messagesRead=${messagesRead} contactAiToggled=${contactAiToggled} config=${config} />
+                  </div>`
               : tab === 'contacts'
                 ? html`<${Contacts} newMessage=${newMessage} chatPresence=${chatPresence} contactInfoUpdated=${contactInfoUpdated} tagsChanged=${tagsChanged} contactTagsUpdated=${contactTagsUpdated} contactAiToggled=${contactAiToggled} messagesRead=${messagesRead} messageStatus=${messageStatus} messageAction=${messageAction} messageReaction=${messageReaction} avatarUpdated=${avatarUpdated} groupParticipantsChanged=${groupParticipantsChanged} initialContactId=${initialContactId} wsConnected=${wsConnected} config=${config} onConfigSave=${save} onUnreadChange=${refreshUnreadCount} />`
                 : tab === 'costs'
                   ? html`<div class="max-w-5xl mx-auto p-4">
-                      <${PageHeader} title="Custos de IA" onBack=${() => setTab('contacts')} />
+                      <${PageHeader} title="Custos de IA" onBack=${() => setTab('home')} />
                       <${CostsDashboard} />
                     </div>`
                   : tab === 'executions'
@@ -544,7 +600,7 @@ function App({ onLogout, hasPassword }) {
                             history.pushState(null, '', '/executions');
                             window.dispatchEvent(new PopStateEvent('popstate'));
                           } else {
-                            setTab('contacts');
+                            setTab('home');
                           }
                         }} />
                         <${Executions} />
@@ -552,6 +608,9 @@ function App({ onLogout, hasPassword }) {
                     : html`<${Sandbox} newMessage=${newMessage} />`
         }
       </main>
+
+      <${BottomNav} tab=${tab} onTabChange=${setTab} pluginScreens=${pluginScreens} unreadCount=${unreadConvos} />
+      <${Toast} message=${notification} />
 
       ${lowBalance ? html`<${LowBalanceModal}
         balance=${lowBalance.remaining}

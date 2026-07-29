@@ -1,0 +1,25 @@
+id: orders
+name: Pedidos (Kanban)
+version: 1.0.0
+whatsbot_api_version: ">=1.0,<2.0"
+description: Extrai pedidos automaticamente das conversas (texto e áudio transcrito) via IA e organiza em um Kanban (novo, aguardando confirmação, separando, separado, saiu para entrega, entregue, cancelado). Cards vinculados à conversa original.
+author: WhatsBot
+entry:
+  tools: tools
+  prompts: prompts
+  routes: routes
+  settings: settings
+  events: events
+migrations: migrations
+screens:
+  - id: orders-board
+    title: Pedidos
+    path: /pedidos
+    icon: shopping-cart
+    component: /plugins/orders/static/orders.js
+permissions:
+  - llm.tool
+  - db.write
+dependencies: []
+events:
+  - message.saved

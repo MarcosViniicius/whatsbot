@@ -8,7 +8,7 @@ const html = htm.bind(h);
 
 // ── Context Menu ─────────────────────────────────────────────────
 
-export function ContextMenu({ x, y, phone, aiEnabled, contactTags, globalTags, isArchived, isUnread, isPinned, onToggleAI, onEditContact, onMarkUnread, onMarkRead, onTagsUpdate, onArchive, onPin, onDelete, onCreateTag, onClose }) {
+export function ContextMenu({ x, y, phone, aiEnabled, contactTags, globalTags, isArchived, isUnread, isPinned, conversationStatus, onToggleAI, onEditContact, onMarkUnread, onMarkRead, onTagsUpdate, onArchive, onPin, onDelete, onCreateTag, onSendToKanban, onSetConversationStatus, onClose }) {
   const ref = useRef(null);
   const [showTags, setShowTags] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -21,8 +21,14 @@ export function ContextMenu({ x, y, phone, aiEnabled, contactTags, globalTags, i
     return () => document.removeEventListener('mousedown', handleClick);
   }, [onClose]);
 
-  const left = Math.min(x, window.innerWidth - 200);
-  const top = Math.min(y, window.innerHeight - 50);
+  // Clamp against BOTH edges (not just far edge) and account for the menu's
+  // real width/height — it grew a lot (Kanban + status actions), so the old
+  // "-50" bottom margin let it render mostly off-screen on short mobile
+  // viewports when opened near the bottom of the contact list.
+  const MENU_WIDTH = 230;
+  const MENU_MAX_HEIGHT = Math.min(window.innerHeight * 0.85, 520);
+  const left = Math.max(8, Math.min(x, window.innerWidth - MENU_WIDTH - 8));
+  const top = Math.max(8, Math.min(y, window.innerHeight - MENU_MAX_HEIGHT - 8));
 
   async function toggleTag(tagName) {
     const current = contactTags || [];
@@ -38,7 +44,7 @@ export function ContextMenu({ x, y, phone, aiEnabled, contactTags, globalTags, i
   return html`
     <div
       ref=${ref}
-      class="fixed z-[100] bg-wa-panel rounded-lg shadow-lg border border-wa-border py-[4px] min-w-[200px] max-h-[85vh] overflow-y-auto wa-scrollbar"
+      class="fixed z-[100] bg-wa-panel rounded-lg shadow-lg border border-wa-border py-[4px] w-[230px] max-h-[85vh] overflow-y-auto wa-scrollbar"
       style="left:${left}px;top:${top}px"
     >
       <button
@@ -94,6 +100,51 @@ export function ContextMenu({ x, y, phone, aiEnabled, contactTags, globalTags, i
         </svg>
         ${isPinned ? 'Desafixar conversa' : 'Fixar conversa'}
       </button>
+
+      <!-- Kanban / conversation lifecycle -->
+      <div class="border-t border-wa-border">
+        ${onSendToKanban ? html`
+          <button
+            onClick=${() => { onSendToKanban(phone); onClose(); }}
+            class="w-full text-left px-4 py-[10px] text-[14.5px] text-wa-text hover:bg-wa-hover transition-colors flex items-center gap-3"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12L8.1 13h7.45c.75 0 1.41-.41 1.75-1.03L20.88 6H4.54l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/>
+            </svg>
+            Enviar para Kanban
+          </button>
+        ` : null}
+        ${(!conversationStatus || conversationStatus === 'open') ? html`
+          <button
+            onClick=${() => { onSetConversationStatus(phone, 'resolved'); onClose(); }}
+            class="w-full text-left px-4 py-[10px] text-[14.5px] text-wa-text hover:bg-wa-hover transition-colors flex items-center gap-3"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="#00a884">
+              <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+            </svg>
+            Marcar atendimento como concluído
+          </button>
+          <button
+            onClick=${() => { onSetConversationStatus(phone, 'closed'); onClose(); }}
+            class="w-full text-left px-4 py-[10px] text-[14.5px] text-wa-text hover:bg-wa-hover transition-colors flex items-center gap-3"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+            </svg>
+            Fechar conversa
+          </button>
+        ` : html`
+          <button
+            onClick=${() => { onSetConversationStatus(phone, 'open'); onClose(); }}
+            class="w-full text-left px-4 py-[10px] text-[14.5px] text-wa-text hover:bg-wa-hover transition-colors flex items-center gap-3"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08a5.99 5.99 0 01-5.65 4c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L14 11h7V4l-3.35 2.35z"/>
+            </svg>
+            Reabrir conversa
+          </button>
+        `}
+      </div>
 
       <!-- Tags toggle -->
       <button

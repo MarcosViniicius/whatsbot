@@ -58,6 +58,14 @@ contacts = Table(
     Column("unread_count", Integer, nullable=False, server_default="0"),
     Column("unread_ai_count", Integer, nullable=False, server_default="0"),
     Column("has_unread_mention", Integer, nullable=False, server_default="0"),
+    # Conversation lifecycle — "open" (default) | "closed" | "resolved".
+    # Independent from is_archived: archiving hides a chat from the sidebar,
+    # this tracks the attendance workflow (Fechar conversa / Marcar concluído /
+    # Reabrir conversa actions) without affecting visibility.
+    Column("conversation_status", Text, nullable=False, server_default="open"),
+    # Unix ts of the last ai_enabled True->False flip; NULL while AI is on.
+    # Anchor for the auto-resume background check (server/background.py).
+    Column("ai_disabled_at", Float),
     Column("created_at", Float, nullable=False),
     Column("updated_at", Float, nullable=False),
 )

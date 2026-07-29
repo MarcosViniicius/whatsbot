@@ -79,6 +79,8 @@ def get_or_create(phone: str, default_ai_enabled: bool = True) -> dict:
         "can_send": True,
         "unread_count": 0,
         "unread_ai_count": 0,
+        "conversation_status": "open",
+        "ai_disabled_at": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -435,6 +437,8 @@ def list_contacts(q: str = "", archived: bool = False) -> list[dict]:
                 "archived_by_app": bool(row["archived_by_app"]) if row["archived_by_app"] is not None else False,
                 "is_pinned": bool(row["is_pinned"]) if row["is_pinned"] is not None else False,
                 "can_send": bool(row["can_send"]) if row["can_send"] is not None else True,
+                "conversation_status": row["conversation_status"] or "open",
+                "ai_disabled_at": row["ai_disabled_at"],
                 "tags": tags_list,
                 "updated_at": row["updated_at"],
             })
@@ -516,6 +520,8 @@ def _row_to_dict(row) -> dict:
         "can_send": bool(row["can_send"]) if row["can_send"] is not None else True,
         "unread_count": row["unread_count"],
         "unread_ai_count": row["unread_ai_count"],
+        "conversation_status": row["conversation_status"] or "open",
+        "ai_disabled_at": row["ai_disabled_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

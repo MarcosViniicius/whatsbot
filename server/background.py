@@ -5,13 +5,17 @@ import logging
 import time
 from pathlib import Path
 
-from db.repositories import contact_repo
+from db.repositories import contact_repo, message_repo
 from agent import group_mentions
 from plugins.events import emit as emit_event, emit_with_filter
 from server.avatars import refresh_and_broadcast
 
 # How often the background sweep re-checks every contact's avatar for changes.
 AVATAR_REFRESH_INTERVAL = 1800  # seconds (30 min)
+
+# How often the AI auto-resume sweep runs. Coarser than the timeout itself
+# (minutes), so a minute of slack on the trigger is fine.
+AI_AUTO_RESUME_CHECK_INTERVAL = 60  # seconds
 
 logger = logging.getLogger(__name__)
 
@@ -229,3 +233,82 @@ async def avatar_fetch_task(deps):
         while slept < AVATAR_REFRESH_INTERVAL and not state.stop_event.is_set():
             await asyncio.sleep(3)
             slept += 3
+
+
+async def ai_auto_resume_loop(deps):
+    """Reactivate the AI for conversations a human operator has gone quiet on.
+
+    Prevents the common failure mode: an operator takes over (manually, or via
+    the transfer_to_human tool), replies a couple of times, then moves on
+    without remembering to turn AI back on — leaving the customer stuck in a
+    human-only conversation nobody is watching. When AI is disabled for a
+    contact AND the customer has messaged again since the operator's last
+    reply (or since AI was turned off, if the operator never replied) AND
+    ``ai_auto_resume_timeout_min`` has passed with no operator activity, AI
+    reactivates automatically. Gated by ``ai_auto_resume_enabled``.
+
+    "Operator activity" = a message with role=assistant, status=operator (see
+    message_repo.get_last_operator_message) — AI-sent replies don't count.
+    """
+    settings = deps.settings
+    ws_manager = deps.ws_manager
+    state = deps.state
+    agent_handler = deps.agent_handler
+
+    while not state.stop_event.is_set():
+        await asyncio.sleep(AI_AUTO_RESUME_CHECK_INTERVAL)
+        if state.stop_event.is_set():
+            return
+        try:
+            if not settings.get("ai_auto_resume_enabled", True):
+                continue
+            timeout_sec = max(1, int(settings.get("ai_auto_resume_timeout_min", 30) or 30)) * 60
+            now = time.time()
+
+            contacts = await asyncio.to_thread(contact_repo.list_contacts, "", False)
+            for c in contacts:
+                if state.stop_event.is_set():
+                    return
+                if c.get("ai_enabled", True):
+                    continue
+                phone = c.get("phone")
+                contact_id = c.get("id")
+                if not phone or not contact_id:
+                    continue
+
+                ai_disabled_at = c.get("ai_disabled_at") or 0
+                last_operator = await asyncio.to_thread(message_repo.get_last_operator_message, contact_id)
+                last_operator_ts = last_operator["ts"] if last_operator else 0
+                reference_ts = max(ai_disabled_at, last_operator_ts)
+                if reference_ts <= 0:
+                    # No anchor at all (AI disabled before this feature existed,
+                    # legacy data) — skip rather than guess.
+                    continue
+                if now - reference_ts < timeout_sec:
+                    continue
+
+                last_user = await asyncio.to_thread(message_repo.get_last_user_message, contact_id)
+                last_user_ts = last_user["ts"] if last_user else 0
+                if last_user_ts <= reference_ts:
+                    # Nothing pending from the customer since the operator's last
+                    # activity — no rush, don't auto-resume an idle conversation.
+                    continue
+
+                contact = agent_handler._get_contact(phone)
+                await asyncio.to_thread(contact.set_ai_enabled, True)
+                note = "IA reativada automaticamente (atendente inativo)."
+                await asyncio.to_thread(contact.add_message, "system_notice", note)
+                logger.info("[AutoResume] AI reactivated for %s (idle %.0fmin)",
+                            phone, (now - reference_ts) / 60)
+                await ws_manager.broadcast("contact_ai_toggled", {
+                    "phone": phone, "ai_enabled": True,
+                })
+                await ws_manager.broadcast("new_message", {
+                    "phone": phone,
+                    "message": {"role": "system_notice", "content": note, "ts": time.time()},
+                })
+                await emit_with_filter("contact.ai_toggled", {
+                    "phone": phone, "ai_enabled": True, "ts": time.time(), "source": "auto_resume",
+                })
+        except Exception as e:
+            logger.error("[AutoResume] sweep failed: %s", e)

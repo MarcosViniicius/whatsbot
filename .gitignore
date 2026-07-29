@@ -38,3 +38,7 @@ server/_reload_trigger.py
 
 # Planos de implementação (local, não versionado)
 PLANO_setup_wizard.md
+
+# Override local de porta pro Docker Compose (dev) — não versionado, produção
+# (Coolify) usa o expose sem publish do docker-compose.yaml original.
+docker-compose.override.yml

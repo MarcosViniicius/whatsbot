@@ -24,6 +24,11 @@
   --wa-badge: 37 211 102;
   --wa-icon: 84 101 111;
   --wa-iconActive: 0 128 105;
+  /* AI signal color — reserved exclusively for "the AI is active here" cues
+     (chat header toggle, attendance-queue badge, thinking pulse). Kept
+     distinct from wa-teal (brand/actions) and red (errors/urgent) so an AI
+     touchpoint is scannable at a glance across the whole app. */
+  --wa-ai: 181 106 20;
 }
 
 html.dark {
@@ -45,6 +50,7 @@ html.dark {
   --wa-badge: 37 211 102;
   --wa-icon: 142 158 168;
   --wa-iconActive: 0 168 132;
+  --wa-ai: 224 158 61;
 }
 
 /* Smooth transitions for status indicators */
@@ -64,6 +70,52 @@ html.dark {
 }
 .animate-pulse-slow {
   animation: pulse-slow 2s ease-in-out infinite;
+}
+
+/* ── "IA ativa" signature glow ──────────────────────────────────────
+   The one recurring animated motif in the app: a soft amber breathing halo
+   used ONLY on the handful of touchpoints where "is the AI live here right
+   now" is the single most important piece of information (chat header
+   toggle, attendance-queue badge). Not used decoratively elsewhere. */
+@keyframes wa-ai-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(var(--wa-ai) / 0.35); }
+  50% { box-shadow: 0 0 0 5px rgb(var(--wa-ai) / 0); }
+}
+.wa-ai-pulse {
+  animation: wa-ai-breathe 2.4s ease-in-out infinite;
+}
+
+/* ── Toast (visible notifications) ──────────────────────────────── */
+@keyframes wa-toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.wa-toast {
+  animation: wa-toast-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── Tab content transition ─────────────────────────────────────── */
+@keyframes wa-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.wa-tab-enter {
+  animation: wa-fade-in 0.18s ease-out;
+}
+
+/* ── Kanban card drop feedback ───────────────────────────────────── */
+@keyframes wa-flash {
+  0% { background-color: rgb(var(--wa-teal) / 0.16); }
+  100% { background-color: transparent; }
+}
+.wa-flash-in {
+  animation: wa-flash 0.9s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wa-ai-pulse, .wa-toast, .wa-tab-enter, .wa-flash-in, .animate-pulse-slow {
+    animation: none !important;
+  }
 }
 
 /* ── WhatsApp Web replica styles ──────────────────────────────── */

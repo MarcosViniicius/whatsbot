@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run endpoint test suite
+        run: python tests/test_endpoints.py
+
+      - name: Validate plugin dependencies
+        run: python -m plugins.dep_check assets/plugin_examples/*
+
+  frontend-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check JS syntax (core + bundled plugins)
+        run: |
+          find web/static/js assets/plugin_examples -name '*.js' -print0 \
+            | xargs -0 -n1 node --check

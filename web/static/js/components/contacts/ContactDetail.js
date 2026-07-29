@@ -26,7 +26,19 @@ function myReaction(message) {
 
 // ── Contact Detail (WhatsApp Web chat panel) ─────────────────────
 
-export function ContactDetail({ phone, onBack, messages, info, contact, onAvatarClick, contactTyping, setContactData, globalTags, groupParticipantsChanged = null, sandbox = false, api = null, scrollToMsg = null, onScrolledToMsg = null }) {
+// Rough ETA text for when this conversation auto-resumes AI (server side:
+// server/background.py ai_auto_resume_loop). Approximate — the real trigger
+// also needs a pending customer message, which isn't known here.
+function autoResumeHint(contact, config) {
+  if (!config || !config.ai_auto_resume_enabled || !contact || !contact.ai_disabled_at) return null;
+  const timeoutSec = (config.ai_auto_resume_timeout_min || 30) * 60;
+  const etaSec = contact.ai_disabled_at + timeoutSec - Date.now() / 1000;
+  if (etaSec <= 0) return 'A IA pode retomar automaticamente a qualquer momento.';
+  const min = Math.round(etaSec / 60);
+  return `Se ninguém responder, a IA retoma sozinha em ~${min <= 1 ? '1' : min}min.`;
+}
+
+export function ContactDetail({ phone, onBack, messages, info, contact, onAvatarClick, contactTyping, setContactData, globalTags, groupParticipantsChanged = null, sandbox = false, api = null, scrollToMsg = null, onScrolledToMsg = null, onToggleAI = null, config = null }) {
   // Effective send API. Sandbox injects local (no-GOWA) endpoints; the contact
   // chat uses the real ones.
   const _api = {
@@ -825,7 +837,38 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
             : info && info.name ? html`<div class="text-wa-secondary text-[13px] leading-tight">${phone}</div>` : null
           }
         </div>
+        ${onToggleAI ? html`
+          <button
+            onClick=${() => onToggleAI(phone, !(contact && contact.ai_enabled))}
+            title=${contact && contact.ai_enabled ? 'Desativar IA nesta conversa' : 'Ativar IA nesta conversa'}
+            class="ml-2 shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[12.5px] font-medium transition-colors ${contact && contact.ai_enabled ? 'bg-wa-ai/10 text-wa-ai hover:bg-wa-ai/20 wa-ai-pulse' : 'bg-red-500/10 text-red-500 hover:bg-red-500/20'}"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+              ${contact && contact.ai_enabled
+                ? html`<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>`
+                : html`<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12z"/>`
+              }
+            </svg>
+            <span class="hidden sm:inline">${contact && contact.ai_enabled ? 'IA ativa' : 'IA desativada'}</span>
+          </button>
+        ` : null}
       </div>
+
+      ${onToggleAI && contact && !contact.ai_enabled ? html`
+        <div class="flex items-center gap-2 px-4 py-2 bg-red-500/10 border-b border-red-500/20 shrink-0">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" class="text-red-500 shrink-0">
+            <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+          </svg>
+          <span class="flex-1 text-[13px] text-wa-text">
+            A IA está desativada para esta conversa — as mensagens não recebem resposta automática.
+            ${autoResumeHint(contact, config) ? html` ${autoResumeHint(contact, config)}` : ''}
+          </span>
+          <button
+            onClick=${() => onToggleAI(phone, true)}
+            class="shrink-0 px-3 py-1 rounded-full bg-wa-teal text-white text-[12.5px] font-semibold hover:opacity-90 transition-opacity"
+          >Reativar IA</button>
+        </div>
+      ` : null}
 
       <!-- Chat area with doodle pattern -->
       <div ref=${chatRef} class="flex-1 min-h-0 overflow-y-auto overscroll-contain wa-scrollbar wa-chat-pattern py-2 px-[4%] lg:px-[7%]">

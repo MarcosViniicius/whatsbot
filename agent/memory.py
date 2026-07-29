@@ -70,6 +70,10 @@ class ContactMemory:
         self.info: dict = {"name": "", "email": "", "profession": "", "company": "", "address": "", "observations": []}
         self.tags: list[str] = []
         self.ai_enabled: bool = True
+        # Unix ts of when ai_enabled last flipped True->False, or None when AI is
+        # on. Anchor for the auto-resume background check (server/background.py) —
+        # not just informational, see set_ai_enabled().
+        self.ai_disabled_at: float | None = None
         self.is_group: bool = False
         self.group_name: str = ""
         self.is_archived: bool = False
@@ -85,6 +89,7 @@ class ContactMemory:
         data = contact_repo.get_or_create(self.phone, default_ai_enabled=self._default_ai_enabled)
         self.id = data["id"]
         self.ai_enabled = data["ai_enabled"]
+        self.ai_disabled_at = data.get("ai_disabled_at")
         self.is_group = data["is_group"]
         self.group_name = data["group_name"]
         self.is_archived = data["is_archived"]
@@ -125,6 +130,7 @@ class ContactMemory:
             company=self.info.get("company", ""),
             address=self.info.get("address", ""),
             ai_enabled=1 if self.ai_enabled else 0,
+            ai_disabled_at=self.ai_disabled_at,
             is_group=1 if self.is_group else 0,
             group_name=self.group_name,
             is_archived=1 if self.is_archived else 0,
@@ -190,7 +196,12 @@ class ContactMemory:
 
     def set_ai_enabled(self, enabled: bool):
         self.ai_enabled = enabled
-        contact_repo.update(self.id, ai_enabled=1 if enabled else 0)
+        self.ai_disabled_at = None if enabled else time.time()
+        contact_repo.update(
+            self.id,
+            ai_enabled=1 if enabled else 0,
+            ai_disabled_at=self.ai_disabled_at,
+        )
 
     def set_tags(self, tags: list[str]):
         self.tags = list(tags)

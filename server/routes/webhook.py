@@ -7,6 +7,7 @@ import random
 import re
 import time
 import uuid
+from pathlib import Path
 
 from gowa.client import GOWASendError, extract_msg_id
 
@@ -422,6 +423,7 @@ def register_routes(app, deps):
     ws_manager = deps.ws_manager
     state = deps.state
     settings = deps.settings
+    statics_senditems_dir = deps.statics_senditems_dir
 
     # ── Group Mention Helpers ──────────────────────────────────────
 
@@ -458,7 +460,54 @@ def register_routes(app, deps):
 
     # ── Reply Splitting & Sending ─────────────────────────────────
 
-    async def _send_reply(phone: str, reply: str):
+    async def _send_voice_reply(phone: str, text_fallback: str, audio_bytes: bytes) -> bool:
+        """Send synthesized speech as a single voice note. Returns False ONLY when
+        the WhatsApp send itself failed, so the caller can fall back to a normal
+        text reply. Once GOWA has accepted the audio, the customer already has
+        it — a failure in bookkeeping after that point (DB write, broadcast,
+        event emit) must NOT be reported as failure, or the caller would send a
+        text reply on top of an audio that already went out."""
+        dest = statics_senditems_dir / f"tts_{int(time.time() * 1000)}.mp3"
+        try:
+            await asyncio.to_thread(dest.write_bytes, audio_bytes)
+            send_result = await asyncio.to_thread(gowa_client.send_audio, phone, str(dest))
+        except Exception as e:
+            logger.warning("[Voice] Failed to send TTS audio to %s, falling back to text: %s", phone, e)
+            return False
+
+        # From here on, WhatsApp already has the audio — bookkeeping failures
+        # are logged, never allowed to make the caller think the send failed.
+        try:
+            msg_id = extract_msg_id(send_result)
+            # Filter GOWA echo-back, same mechanism as the operator audio-send endpoint.
+            if msg_id:
+                state.processed_messages.add(msg_id)
+
+            rel_path = f"statics/operator/{dest.name}"
+            contact = agent_handler._get_contact(phone)
+            await asyncio.to_thread(
+                contact.add_message, "assistant", text_fallback,
+                media_type="audio", media_path=rel_path, status="sent", msg_id=msg_id,
+            )
+            await ws_manager.broadcast("new_message", {
+                "phone": phone,
+                "message": {
+                    "role": "assistant", "content": text_fallback, "ts": time.time(),
+                    "status": "sent", "msg_id": msg_id,
+                    "media_type": "audio", "media_path": rel_path,
+                },
+            })
+            await emit_with_filter("message.sent", {
+                "phone": phone, "text": text_fallback, "msg_id": msg_id,
+                "media_type": "audio", "media_path": rel_path,
+                "source": "ai", "status": "sent", "ts": time.time(),
+            })
+            logger.info("[Voice] AI voice reply sent to %s (%d bytes)", phone, len(audio_bytes))
+        except Exception as e:
+            logger.error("[Voice] Audio delivered to %s but bookkeeping failed: %s", phone, e)
+        return True
+
+    async def _send_reply(phone: str, reply: str, trigger_media_type: str | None = None):
         """Send reply (possibly split into multiple parts) and broadcast."""
         # Plugin filter: full raw reply before split
         reply = await apply_filter("filter.reply.raw", reply, {"phone": phone})
@@ -472,6 +521,29 @@ def register_routes(app, deps):
             parts = parse_split_reply(reply)
         else:
             parts = [reply]
+
+        # Voice reply — synthesize the WHOLE reply as one voice note instead of
+        # sending text, when eligible. "mirror" (default) only voices replies
+        # to a customer audio message; "always" tries voice for every reply;
+        # "off" never does. Any failure (no model configured, provider without
+        # TTS support, GOWA send error) falls through to the normal text path
+        # below — voice is opportunistic, never blocks a reply from going out.
+        #
+        # IMPORTANT: synthesize from the SPLIT parts joined back together, not
+        # the raw `reply`. With split_messages on, `reply` is the raw JSON
+        # array string (e.g. '["Olá!", "Seu pedido já foi separado."]') — the
+        # TTS engine would read the brackets/quotes/commas aloud instead of
+        # the actual message, producing a long clip with no real content.
+        voice_mode = settings.get("voice_reply_mode", "mirror")
+        voice_eligible = (
+            voice_mode == "always"
+            or (voice_mode == "mirror" and trigger_media_type == "audio")
+        )
+        if voice_eligible:
+            voice_text = "\n".join(p for p in parts if p) or reply
+            audio_bytes = await asyncio.to_thread(agent_handler.synthesize_speech, voice_text, phone)
+            if audio_bytes and await _send_voice_reply(phone, voice_text, audio_bytes):
+                return
 
         # Plugin filter: list of parts (can add/remove/reorder)
         parts = await apply_filter("filter.reply.parts", parts, {"phone": phone})
@@ -781,12 +853,12 @@ def register_routes(app, deps):
                 return
             await asyncio.sleep(0.3)
 
-    async def _send_with_typing_guard(phone: str, reply: str):
+    async def _send_with_typing_guard(phone: str, reply: str, trigger_media_type: str | None = None):
         """Wait for contact to stop typing, mark sending=True, then send (uncancellable phase)."""
         await _wait_typing_paused(phone)
         state.sending[phone] = True
         try:
-            await _send_reply(phone, reply)
+            await _send_reply(phone, reply, trigger_media_type=trigger_media_type)
         finally:
             state.sending[phone] = False
 
@@ -802,7 +874,17 @@ def register_routes(app, deps):
         state.processing_tasks[phone] = asyncio.create_task(_orchestrate(phone))
 
     async def _run_one_cycle(phone: str, items: list[dict]):
-        """One processing cycle: text batch (single LLM call) + each media item separately.
+        """One processing cycle: saves every item (text batch + each media item,
+        transcribing/displaying each as before), then makes exactly ONE combined
+        LLM call and sends exactly ONE reply for the whole cycle.
+
+        Text and media items used to be handled as fully independent turns —
+        a batch with both text AND audio produced TWO separate AI replies (one
+        text, one voice), because each got its own aprocess_message() call.
+        From the customer's side that read as "answering twice at the same
+        time". Now every item's content (text + transcribed media, in batch
+        order) is folded into one prompt, one call, one reply — voice-eligible
+        only if the batch contained audio.
 
         Cancellable via task.cancel() up until the SEND phase, which is guarded by
         state.sending[phone]=True so the webhook does not interrupt mid-send.
@@ -851,7 +933,14 @@ def register_routes(app, deps):
                             pass
                     await ws_manager.broadcast("messages_read", {"phone": phone, "only_user": True})
 
-            # ── Text batch ──────────────────────────────────
+            # Pieces of the ONE combined prompt sent to the LLM for this cycle,
+            # in batch order (text first, then each media item as it arrives).
+            combined_bits: list[str] = []
+            item_labels: list[str] = []
+            any_audio = False
+            fallback_image_path: str | None = None
+
+            # ── Text batch — saved + folded into the combined prompt ──
             if text_parts:
                 combined = "\n".join(t for t in text_parts if t)
                 if combined:
@@ -867,39 +956,12 @@ def register_routes(app, deps):
                         "source": "batch_text",
                         "ts": time.time(),
                     })
-                    if contact.ai_enabled and settings.get("auto_reply", True):
-                        if not agent_handler.api_key:
-                            notice = "[WhatsBot] API key não configurada."
-                            contact.add_message("system_notice", notice)
-                            await ws_manager.broadcast("new_message", {
-                                "phone": phone,
-                                "message": {"role": "system_notice", "content": notice, "ts": time.time()},
-                            })
-                        else:
-                            try:
-                                await asyncio.to_thread(gowa_client.send_chat_presence, phone)
-                                # Cancellable LLM call
-                                result = await agent_handler.aprocess_message(
-                                    phone, combined,
-                                    save_user_message=False, save_response=False)
-                                if result.tool_calls:
-                                    await _broadcast_tool_calls(phone, result.tool_calls, result.contact_info)
-                                if result.reply:
-                                    if result.reply.startswith("[WhatsBot]"):
-                                        contact.add_message("system_notice", result.reply)
-                                        await ws_manager.broadcast("new_message", {
-                                            "phone": phone,
-                                            "message": {"role": "system_notice", "content": result.reply, "ts": time.time()},
-                                        })
-                                    else:
-                                        await _send_with_typing_guard(phone, result.reply)
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception as e:
-                                logger.error("[Batch] Agent error for %s: %s", phone, e)
-                                await atrack_step("error", {"error": str(e), "phase": "text_processing"}, status="error")
+                    combined_bits.append(combined)
+                    item_labels.append("text")
 
-            # ── Media items (each handled individually) ─────
+            # ── Media items — each saved/transcribed/displayed individually,
+            # but folded into the SAME combined prompt instead of getting its
+            # own separate LLM call + reply ──
             for item in media_items:
                 text = item.get("text", "")
                 image_path = item.get("image_path")
@@ -912,6 +974,7 @@ def register_routes(app, deps):
                 # the image/audio paths for items predating the typed fields.
                 media_label = item.get("media_type") or ("image" if image_path else "audio")
                 logger.info("[Batch] Processing %s from %s", media_label, phone)
+                item_labels.append(media_label)
 
                 _saved_text = text or ("[Áudio recebido]" if audio_path else "")
                 _saved_media_type = item.get("media_type") or ("image" if image_path else "audio")
@@ -988,9 +1051,36 @@ def register_routes(app, deps):
                             },
                         })
 
-                if not contact.ai_enabled or not settings.get("auto_reply", True):
-                    continue
+                if audio_path:
+                    any_audio = True
+                    combined_bits.append(
+                        f"[Transcrição do áudio]: {transcription}" if transcription
+                        else (text or "[Áudio recebido]")
+                    )
+                elif image_path:
+                    if transcription:
+                        prefix = f"[Descrição da imagem]: {transcription}"
+                        combined_bits.append(f"{prefix}\n{text}" if text else prefix)
+                    else:
+                        # No transcription available — fall back to letting the
+                        # model see the raw image directly (last one wins if
+                        # more than one untranscribed image lands in a batch,
+                        # an edge case rare enough not to warrant multi-image
+                        # vision support here).
+                        fallback_image_path = image_path
+                        if text:
+                            combined_bits.append(text)
+                elif document_path:
+                    if transcription:
+                        doc_prefix = f"[Conteúdo do documento]: {transcription}"
+                        combined_bits.append(f"{text}\n{doc_prefix}" if text else doc_prefix)
+                    elif text:
+                        combined_bits.append(text)
+                elif text:
+                    combined_bits.append(text)
 
+            # ── ONE combined LLM call + ONE reply for the whole cycle ──
+            if (combined_bits or fallback_image_path) and contact.ai_enabled and settings.get("auto_reply", True):
                 if not agent_handler.api_key:
                     notice = "[WhatsBot] API key não configurada."
                     contact.add_message("system_notice", notice)
@@ -998,45 +1088,39 @@ def register_routes(app, deps):
                         "phone": phone,
                         "message": {"role": "system_notice", "content": notice, "ts": time.time()},
                     })
-                    continue
-
-                llm_text = text or ""
-                if audio_path:
-                    if transcription:
-                        llm_text = f"[Transcrição do áudio]: {transcription}"
-                    else:
-                        llm_text = llm_text or "[Áudio recebido]"
-                elif image_path and transcription:
-                    prefix = f"[Descrição da imagem]: {transcription}"
-                    llm_text = f"{prefix}\n{text}" if text else prefix
-                elif document_path and transcription:
-                    doc_prefix = f"[Conteúdo do documento]: {transcription}"
-                    llm_text = f"{text}\n{doc_prefix}" if text else doc_prefix
-
-                try:
-                    await asyncio.to_thread(gowa_client.send_chat_presence, phone)
-                    result = await agent_handler.aprocess_message(
-                        phone,
-                        llm_text,
-                        save_user_message=False, save_response=False,
-                        image_path=image_path if not transcription else None,
-                    )
-                    if result.tool_calls:
-                        await _broadcast_tool_calls(phone, result.tool_calls, result.contact_info)
-                    if result.reply:
-                        if result.reply.startswith("[WhatsBot]"):
-                            contact.add_message("system_notice", result.reply)
-                            await ws_manager.broadcast("new_message", {
-                                "phone": phone,
-                                "message": {"role": "system_notice", "content": result.reply, "ts": time.time()},
-                            })
-                        else:
-                            await _send_with_typing_guard(phone, result.reply)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logger.error("[Batch] Agent error for %s (%s): %s", phone, media_label, e)
-                    await atrack_step("error", {"error": str(e), "phase": f"{media_label}_processing"}, status="error")
+                else:
+                    llm_text = "\n".join(b for b in combined_bits if b)
+                    try:
+                        await asyncio.to_thread(gowa_client.send_chat_presence, phone)
+                        # Cancellable LLM call
+                        result = await agent_handler.aprocess_message(
+                            phone, llm_text,
+                            save_user_message=False, save_response=False,
+                            image_path=fallback_image_path,
+                        )
+                        if result.tool_calls:
+                            await _broadcast_tool_calls(phone, result.tool_calls, result.contact_info)
+                        if result.reply:
+                            if result.reply.startswith("[WhatsBot]"):
+                                contact.add_message("system_notice", result.reply)
+                                await ws_manager.broadcast("new_message", {
+                                    "phone": phone,
+                                    "message": {"role": "system_notice", "content": result.reply, "ts": time.time()},
+                                })
+                            else:
+                                await _send_with_typing_guard(
+                                    phone, result.reply,
+                                    trigger_media_type="audio" if any_audio else None,
+                                )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        logger.error("[Batch] Agent error for %s: %s", phone, e)
+                        await atrack_step(
+                            "error",
+                            {"error": str(e), "phase": f"{'+'.join(item_labels)}_processing"},
+                            status="error",
+                        )
 
             await aend_execution(exec_id)
         except asyncio.CancelledError:

@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import htm from 'htm';
-import { getContacts, getContact, markAsRead, markAsUnread, toggleContactAI, getTags, deleteContact, archiveContact, pinContact, checkPhone, updateContactTags, createTag } from '../../services/api.js';
+import { getContacts, getContact, markAsRead, markAsUnread, toggleContactAI, getTags, deleteContact, archiveContact, pinContact, checkPhone, updateContactTags, createTag, setConversationStatus, authHeaders } from '../../services/api.js';
 import { ContactList } from './ContactList.js';
 import { ContactDetail } from './ContactDetail.js';
 import { ContactInfoPanel } from './ContactInfoPanel.js';
@@ -102,7 +102,7 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
       if (selectedRef.current === phone) {
         setSelected(null);
         setContactData(null);
-        history.pushState(null, '', '/');
+        history.pushState(null, '', '/conversas');
       }
     }
   }, []);
@@ -114,7 +114,7 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
       if (selectedRef.current === phone) {
         setSelected(null);
         setContactData(null);
-        history.pushState(null, '', '/');
+        history.pushState(null, '', '/conversas');
       }
     }
   }, []);
@@ -137,6 +137,58 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
       )));
     }
   }, [sortContacts]);
+
+  // ── Conversation lifecycle (Fechar / Marcar concluído / Reabrir) ──
+  const [actionToast, setActionToast] = useState('');
+  const toastTimer = useRef(null);
+  const showToast = useCallback((msg) => {
+    setActionToast(msg);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setActionToast(''), 3000);
+  }, []);
+
+  const handleSetConversationStatus = useCallback(async (phone, status) => {
+    const res = await setConversationStatus(phone, status);
+    if (res.ok) {
+      setContacts(prev => prev.map(c => c.phone === phone ? { ...c, conversation_status: status } : c));
+      if (phone === selectedRef.current) {
+        setContactData(prev => prev ? { ...prev, conversation_status: status } : prev);
+      }
+      const labels = { open: 'Conversa reaberta.', closed: 'Conversa fechada.', resolved: 'Atendimento marcado como concluído.' };
+      showToast(labels[status] || 'Status atualizado.');
+    } else {
+      showToast(res.error || 'Erro ao atualizar status da conversa.');
+    }
+  }, [showToast]);
+
+  // "Enviar para Kanban" — creates a draft order card linked to this contact,
+  // for the operator to fill in from the Pedidos board. Requires the
+  // orders plugin (storages/plugins/orders); fails gracefully if absent.
+  const handleSendToKanban = useCallback(async (phone) => {
+    const c = contactsRef.current.find(x => x.phone === phone);
+    if (!c) return;
+    try {
+      const res = await fetch('/api/plugins/orders/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          contact_id: c.id,
+          contact_phone: c.phone,
+          contact_name: c.name || c.group_name || '',
+          items: [],
+          notes: 'Enviado manualmente da conversa',
+        }),
+      });
+      const data = await res.json();
+      if (data && data.ok) {
+        showToast('Pedido criado no Kanban.');
+      } else {
+        showToast((data && data.error) || 'Plugin de Pedidos não está ativo.');
+      }
+    } catch (e) {
+      showToast('Plugin de Pedidos não está ativo.');
+    }
+  }, [showToast]);
 
   // ── Selection mode (bulk actions) ───────────────────────────────
   const enterSelection = useCallback(() => { setSelectionMode(true); setSelectedPhones([]); }, []);
@@ -808,6 +860,8 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
                 groupParticipantsChanged=${groupParticipantsChanged}
                 scrollToMsg=${scrollToMsg}
                 onScrolledToMsg=${() => setScrollToMsg(null)}
+                onToggleAI=${handleToggleAI}
+                config=${config}
               />`
           }
           ${showInfoPanel && selected ? html`
@@ -843,6 +897,7 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
           isArchived=${ctxMenu.isArchived}
           isUnread=${ctxMenu.isUnread}
           isPinned=${ctxMenu.isPinned}
+          conversationStatus=${(contacts.find(c => c.phone === ctxMenu.phone) || {}).conversation_status || 'open'}
           onToggleAI=${handleToggleAI}
           onEditContact=${(phone) => {
             if (selectedRef.current === phone) {
@@ -866,8 +921,15 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
           onPin=${handlePin}
           onDelete=${handleDelete}
           onCreateTag=${handleCreateTag}
+          onSendToKanban=${handleSendToKanban}
+          onSetConversationStatus=${handleSetConversationStatus}
           onClose=${() => setCtxMenu(null)}
         />
+      ` : null}
+      ${actionToast ? html`
+        <div class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-wa-text text-wa-bg text-sm px-4 py-2 rounded-lg shadow-lg z-[200]">
+          ${actionToast}
+        </div>
       ` : null}
     </div>
   `;

@@ -217,6 +217,42 @@ def register_routes(app, deps):
         await ws_manager.broadcast("contact_pinned", {"phone": phone, "pinned": result})
         return _ok({"pinned": result})
 
+    @app.post("/api/contacts/{phone}/conversation-status")
+    async def set_conversation_status(phone: str, body: dict):
+        """Set the attendance lifecycle status (open/closed/resolved) for a conversation.
+
+        Independent from is_archived — this tracks "Fechar conversa" / "Marcar
+        atendimento como concluído" / "Reabrir conversa", not sidebar visibility.
+        """
+        status = (body.get("status") or "").strip()
+        if status not in ("open", "closed", "resolved"):
+            return _err("Campo 'status' deve ser 'open', 'closed' ou 'resolved'.")
+        def _set():
+            data = contact_repo.get_by_phone(phone)
+            if data is None:
+                return None
+            contact_repo.update(data["id"], conversation_status=status)
+            # Marking a conversation resolved implies the human is done with it —
+            # hand it back to the AI right away instead of waiting for the
+            # auto-resume timeout (server/background.py ai_auto_resume_loop).
+            reactivated_ai = False
+            if status == "resolved" and not data.get("ai_enabled", True):
+                contact = agent_handler._get_contact(phone)
+                contact.set_ai_enabled(True)
+                reactivated_ai = True
+            return reactivated_ai
+        reactivated_ai = await asyncio.to_thread(_set)
+        if reactivated_ai is None:
+            return _err("Contato não encontrado.", status=404)
+        logger.info("[Contact] Conversation status for %s set to %s", phone, status)
+        await ws_manager.broadcast("conversation_status_changed", {"phone": phone, "status": status})
+        if reactivated_ai:
+            await ws_manager.broadcast("contact_ai_toggled", {"phone": phone, "ai_enabled": True})
+            await emit_with_filter("contact.ai_toggled", {
+                "phone": phone, "ai_enabled": True, "ts": time.time(), "source": "resolved",
+            })
+        return _ok({"status": status, "ai_reactivated": reactivated_ai})
+
     @app.post("/api/contacts/{phone}/send")
     async def send_to_contact(phone: str, body: dict):
         """Send a manual message to a contact (operator-initiated, no LLM)."""

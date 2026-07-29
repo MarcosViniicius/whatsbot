@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from server.auth import auth_required, verify_token
 from server.helpers import _get_web_dir
 from server.state import MemoryLogHandler, ConnectionManager, AppState
-from server.background import start_gowa_task, status_poll_loop, qr_poll_loop, avatar_fetch_task
+from server.background import start_gowa_task, status_poll_loop, qr_poll_loop, avatar_fetch_task, ai_auto_resume_loop
 from server.routes import logs, sandbox, config, whatsapp, websocket, usage, contacts, webhook, auth, tags, executions, update, setup as setup_routes, plugins as plugins_routes, tools as tools_routes, admin as admin_routes, ai_engine as ai_engine_routes
 from db.repositories import tool_override_repo
 from agent import group_mentions, agent_factory
@@ -187,6 +187,7 @@ def create_app(
             asyncio.create_task(status_poll_loop(deps)),
             asyncio.create_task(qr_poll_loop(deps)),
             asyncio.create_task(avatar_fetch_task(deps)),
+            asyncio.create_task(ai_auto_resume_loop(deps)),
         ]
         yield
         # Shutdown
