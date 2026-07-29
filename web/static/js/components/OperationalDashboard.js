@@ -34,14 +34,14 @@ function formatMoney(value) {
 // wall of identical white cards.
 function StatCard({ label, value, hint, accent, bar, icon }) {
   return html`
-    <div class="relative bg-wa-bg rounded-xl pl-3.5 pr-2.5 py-2.5 border border-wa-border shadow-sm flex items-start gap-2 min-w-0 overflow-hidden transition-shadow hover:shadow-md">
-      <span class="absolute left-0 top-0 bottom-0 w-[3px] ${bar || 'bg-wa-teal'}"></span>
-      <div class="flex flex-col gap-0.5 min-w-0 flex-1">
-        <span class="text-[10px] font-semibold text-wa-secondary uppercase tracking-wide leading-snug line-clamp-2">${label}</span>
-        <span class="text-xl font-bold tabular-nums leading-tight ${accent || 'text-wa-text'}">${value}</span>
-        ${hint ? html`<span class="text-xs text-wa-secondary">${hint}</span>` : null}
+    <div class="relative bg-wa-panel rounded-2xl pl-4 pr-3 py-3 border border-wa-border/80 shadow-2xs flex items-start justify-between gap-2 min-w-0 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
+      <span class="absolute left-0 top-0 bottom-0 w-[4px] ${bar || 'bg-wa-teal'}"></span>
+      <div class="flex flex-col gap-1 min-w-0 flex-1">
+        <span class="text-[11px] font-semibold text-wa-secondary uppercase tracking-wider leading-snug line-clamp-1">${label}</span>
+        <span class="text-2xl font-bold tabular-nums leading-none tracking-tight ${accent || 'text-wa-text'}">${value}</span>
+        ${hint ? html`<span class="text-xs text-wa-secondary leading-none">${hint}</span>` : null}
       </div>
-      ${icon ? html`<span class="shrink-0 opacity-40 mt-0.5">${icon}</span>` : null}
+      ${icon ? html`<div class="shrink-0 p-2 rounded-xl bg-wa-hover/60 text-wa-secondary mt-0.5">${icon}</div>` : null}
     </div>
   `;
 }
@@ -100,6 +100,7 @@ export function OperationalDashboard({ pluginScreens, newMessage, messagesRead, 
   const [orderStats, setOrderStats] = useState(null);
   const [ordersAvailable, setOrdersAvailable] = useState(true);
   const [OrdersComponent, setOrdersComponent] = useState(null);
+  const [queueFilter, setQueueFilter] = useState('all'); // 'all' | 'human' | 'unread'
 
   const ordersScreen = useMemo(
     () => (pluginScreens || []).find((s) => s.pluginId === 'orders'),
@@ -150,46 +151,89 @@ export function OperationalDashboard({ pluginScreens, newMessage, messagesRead, 
   }, [ordersScreen]);
 
   const openConvos = contacts.filter((c) => !c.is_archived);
-  // Precisam de atendente (IA desligada) sempre primeiro — é a fila real de
-  // trabalho do atendente; o resto ("aguardando resposta" comum, IA ligada
-  // mas ainda não respondeu) vem depois, ordenado por quem tem mais msgs.
   const needsHumanConvos = openConvos.filter((c) => c.ai_enabled === false);
   const waitingConvos = openConvos.filter((c) => c.ai_enabled !== false && (c.unread_count || 0) > 0)
     .sort((a, b) => (b.unread_count || 0) - (a.unread_count || 0));
-  const queue = [...needsHumanConvos, ...waitingConvos];
+  const queueAll = [...needsHumanConvos, ...waitingConvos];
+
+  const filteredQueue = queueFilter === 'human'
+    ? needsHumanConvos
+    : queueFilter === 'unread'
+    ? waitingConvos
+    : queueAll;
 
   return html`
-    <div class="flex flex-col gap-3 h-full pt-12 lg:pt-0">
+    <div class="flex flex-col gap-3.5 h-full p-3 lg:p-4 pb-4">
       <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
         <${StatCard} label="Conversas abertas" value=${loadingContacts ? '…' : openConvos.length} bar="bg-wa-teal" icon=${_ICON.chat} />
         <${StatCard} label="Precisam de atendente" value=${loadingContacts ? '…' : needsHumanConvos.length} accent=${needsHumanConvos.length > 0 ? 'text-wa-ai' : ''} bar="bg-wa-ai" icon=${_ICON.hand} />
         <${StatCard} label="Pedidos hoje" value=${orderStats ? orderStats.orders_today_count : '—'} bar="bg-wa-teal" icon=${_ICON.cart} />
-        <${StatCard} label="Vendido hoje" value=${orderStats ? formatMoney(orderStats.orders_today_total) : '—'} accent="text-green-600" bar="bg-green-600" icon=${_ICON.money} />
-        <${StatCard} label="Em entrega" value=${orderStats ? orderStats.in_delivery_count : '—'} bar="bg-orange-500" icon=${_ICON.truck} />
-        <${StatCard} label="Entregues hoje" value=${orderStats ? orderStats.delivered_today_count : '—'} accent="text-green-600" bar="bg-green-600" icon=${_ICON.check} />
+        <${StatCard} label="Vendido hoje" value=${orderStats ? formatMoney(orderStats.orders_today_total) : '—'} accent="text-emerald-500" bar="bg-emerald-500" icon=${_ICON.money} />
+        <${StatCard} label="Em entrega" value=${orderStats ? orderStats.in_delivery_count : '—'} bar="bg-amber-500" icon=${_ICON.truck} />
+        <${StatCard} label="Entregues hoje" value=${orderStats ? orderStats.delivered_today_count : '—'} accent="text-emerald-500" bar="bg-emerald-500" icon=${_ICON.check} />
       </div>
 
-      <div class="grid grid-cols-1 xl:grid-cols-[1fr_280px] gap-4 flex-1 min-h-0">
-        <div class="bg-wa-panel rounded-xl border border-wa-border p-3 h-[65vh] xl:h-auto xl:min-h-[420px] flex flex-col">
+      <div class="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-4 flex-1 min-h-0">
+        <div class="bg-wa-panel rounded-2xl border border-wa-border p-3.5 h-[65vh] xl:h-auto xl:min-h-[440px] flex flex-col shadow-2xs">
           ${!ordersScreen
             ? html`
-              <div class="flex-1 flex flex-col items-center justify-center text-center gap-2 text-wa-secondary p-6">
-                <span class="text-sm">O Kanban de pedidos precisa do plugin "Pedidos (Kanban)".</span>
-                <a href="/plugins" class="text-sm text-wa-teal hover:underline">Ativar em Gerenciar Plugins</a>
+              <div class="flex-1 flex flex-col items-center justify-center text-center gap-2.5 text-wa-secondary p-6">
+                <div class="w-12 h-12 rounded-2xl bg-wa-teal/10 text-wa-teal flex items-center justify-center text-xl">🛒</div>
+                <span class="text-sm font-medium">O Kanban de pedidos precisa do plugin "Pedidos (Kanban)".</span>
+                <a href="/plugins" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wa-teal/10 text-wa-teal hover:bg-wa-teal/20 transition-colors no-underline">
+                  Gerenciar Plugins
+                </a>
               </div>
             `
             : OrdersComponent
               ? html`<${OrdersComponent} apiBase="/api/plugins/orders" />`
-              : html`<div class="flex-1 flex items-center justify-center text-wa-secondary text-sm">Carregando Kanban…</div>`
+              : html`<div class="flex-1 flex items-center justify-center text-wa-secondary text-sm font-medium">Carregando Kanban…</div>`
           }
         </div>
 
-        <div class="bg-wa-bg rounded-xl border border-wa-border p-3 flex flex-col gap-1 min-h-0">
-          <h2 class="text-xs font-semibold text-wa-secondary uppercase tracking-wide px-1 mb-1">Fila de atendimento</h2>
-          <div class="flex flex-col overflow-y-auto max-h-[280px] xl:max-h-[420px]">
-            ${queue.length === 0
-              ? html`<div class="text-sm text-wa-secondary px-2 py-3">Nenhuma conversa esperando 🎉</div>`
-              : queue.map((c) => html`<${ConversationRow} key=${c.id} contact=${c} config=${config} />`)}
+        <div class="bg-wa-panel rounded-2xl border border-wa-border p-3.5 flex flex-col gap-2.5 min-h-0 shadow-2xs">
+          <div class="flex items-center justify-between px-0.5">
+            <h2 class="text-xs font-bold text-wa-secondary uppercase tracking-wider">Fila de Atendimento</h2>
+            <a href="/conversas" class="text-[11px] font-semibold text-wa-teal hover:underline no-underline">Ver todas</a>
+          </div>
+
+          <!-- Queue filter chips -->
+          <div class="flex items-center gap-1.5 p-1 bg-wa-bg rounded-xl border border-wa-border/60">
+            <button
+              onClick=${() => setQueueFilter('all')}
+              class="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold transition-all ${
+                queueFilter === 'all' ? 'bg-wa-panel text-wa-text shadow-2xs' : 'text-wa-secondary hover:text-wa-text'
+              }"
+            >
+              Todas (${queueAll.length})
+            </button>
+            <button
+              onClick=${() => setQueueFilter('human')}
+              class="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold transition-all ${
+                queueFilter === 'human' ? 'bg-wa-ai/20 text-wa-ai shadow-2xs' : 'text-wa-secondary hover:text-wa-text'
+              }"
+            >
+              Atendente (${needsHumanConvos.length})
+            </button>
+            <button
+              onClick=${() => setQueueFilter('unread')}
+              class="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold transition-all ${
+                queueFilter === 'unread' ? 'bg-wa-teal/20 text-wa-teal shadow-2xs' : 'text-wa-secondary hover:text-wa-text'
+              }"
+            >
+              Não Lidas (${waitingConvos.length})
+            </button>
+          </div>
+
+          <div class="flex flex-col overflow-y-auto max-h-[280px] xl:max-h-[420px] wa-scrollbar gap-1 pr-0.5">
+            ${filteredQueue.length === 0
+              ? html`
+                <div class="text-center py-8 px-3 flex flex-col items-center gap-2">
+                  <span class="text-2xl">🎉</span>
+                  <span class="text-xs font-medium text-wa-secondary">Nenhuma conversa na fila neste filtro</span>
+                </div>
+              `
+              : filteredQueue.map((c) => html`<${ConversationRow} key=${c.id} contact=${c} config=${config} />`)}
           </div>
         </div>
       </div>

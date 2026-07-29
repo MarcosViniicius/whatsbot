@@ -16,6 +16,7 @@ import { LowBalanceModal } from './components/LowBalanceModal.js';
 import { Toast } from './components/Toast.js';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import { useConfig } from './hooks/useConfig.js';
+import { ConnectionStatus, QRCodeModal } from './components/QRCode.js';
 import { checkAuth, authHeaders, getUnreadCount } from './services/api.js';
 import { playTransferAlert } from './utils/alertSound.js';
 import { getNotifPref, playNotificationSound, showBrowserNotification } from './utils/notifications.js';
@@ -108,7 +109,170 @@ function MenuItem({ active, href, onClick, icon, children }) {
   `;
 }
 
-function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, accountUrl }) {
+function DesktopNavbar({ tab, onTabChange, unreadCount, status, qrAvailable, config, onSaveConfig, onOpenQR, pluginScreens, hasPassword, onLogout, accountUrl }) {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
+  const [pluginsMenuOpen, setPluginsMenuOpen] = useState(false);
+  const pluginsRef = useRef(null);
+
+  function toggleDark() {
+    const next = !document.documentElement.classList.contains('dark');
+    document.documentElement.classList.toggle('dark', next);
+    try { localStorage.setItem('whatsbot_theme', next ? 'dark' : 'light'); } catch (e) {}
+    setDark(next);
+  }
+
+  useEffect(() => {
+    function onDoc(e) {
+      if (pluginsRef.current && !pluginsRef.current.contains(e.target)) setPluginsMenuOpen(false);
+    }
+    if (pluginsMenuOpen) document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [pluginsMenuOpen]);
+
+  const autoReply = config ? config.auto_reply !== false : true;
+
+  function handleToggleAutoReply() {
+    if (!config || !onSaveConfig) return;
+    onSaveConfig({ auto_reply: !autoReply });
+  }
+
+  const navItems = [
+    { id: 'home', label: 'Início', path: CORE_TAB_PATHS.home },
+    { id: 'contacts', label: 'Conversas', path: CORE_TAB_PATHS.contacts, badge: unreadCount },
+    { id: 'dashboard', label: 'Painel', path: CORE_TAB_PATHS.dashboard },
+    { id: 'sandbox', label: 'Sandbox', path: CORE_TAB_PATHS.sandbox },
+    { id: 'costs', label: 'Custos', path: CORE_TAB_PATHS.costs },
+    { id: 'executions', label: 'Execuções', path: CORE_TAB_PATHS.executions },
+  ];
+
+  return html`
+    <header class="hidden lg:flex items-center justify-between px-5 h-[56px] bg-wa-panel border-b border-wa-border shrink-0 z-40 select-none shadow-xs">
+      <div class="flex items-center gap-6">
+        <div onClick=${() => onTabChange('home')} class="flex items-center gap-2.5 cursor-pointer group">
+          <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-emerald-400 flex items-center justify-center text-white font-black text-sm shadow-sm group-hover:scale-105 transition-transform">
+            WB
+          </div>
+          <div class="flex flex-col">
+            <span class="font-bold text-wa-text tracking-tight text-[15px] leading-none">WhatsBot</span>
+            <span class="text-[10px] text-wa-secondary font-medium mt-0.5">Painel IA Operator</span>
+          </div>
+        </div>
+
+        <nav class="flex items-center gap-1">
+          ${navItems.map(item => {
+            const isActive = tab === item.id;
+            return html`
+              <a
+                key=${item.id}
+                href=${item.path}
+                onClick=${(e) => {
+                  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+                  e.preventDefault();
+                  onTabChange(item.id);
+                }}
+                class="relative px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 no-underline ${
+                  isActive
+                    ? 'bg-wa-teal/15 text-wa-teal shadow-2xs'
+                    : 'text-wa-secondary hover:text-wa-text hover:bg-wa-hover'
+                }"
+              >
+                ${item.label}
+                ${item.badge > 0 ? html`
+                  <span class="bg-wa-teal text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full leading-snug shadow-2xs animate-pulse-slow">
+                    ${item.badge}
+                  </span>
+                ` : null}
+              </a>
+            `;
+          })}
+
+          ${(pluginScreens && pluginScreens.length > 0) ? html`
+            <div ref=${pluginsRef} class="relative ml-1">
+              <button
+                onClick=${() => setPluginsMenuOpen(!pluginsMenuOpen)}
+                class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer ${
+                  tab && tab.startsWith('plugin:')
+                    ? 'bg-wa-teal/15 text-wa-teal'
+                    : 'text-wa-secondary hover:text-wa-text hover:bg-wa-hover'
+                }"
+              >
+                Plugins (${pluginScreens.length})
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" class="transition-transform ${pluginsMenuOpen ? 'rotate-180' : ''}"><path d="M7 10l5 5 5-5z"/></svg>
+              </button>
+              ${pluginsMenuOpen ? html`
+                <div class="absolute left-0 top-full mt-1 bg-wa-bg border border-wa-border rounded-xl shadow-lg py-1.5 min-w-[200px] z-50">
+                  ${pluginScreens.map(s => html`
+                    <a
+                      key=${pluginTabId(s)}
+                      href=${s.path}
+                      onClick=${(e) => {
+                        if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+                        e.preventDefault();
+                        onTabChange(pluginTabId(s));
+                        setPluginsMenuOpen(false);
+                      }}
+                      class="px-3.5 py-2 text-xs font-medium text-wa-text hover:bg-wa-hover flex items-center gap-2 no-underline cursor-pointer"
+                    >
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" class="text-wa-teal"><path d="M5 3h6v8H5V3zm8 0h6v6h-6V3zm0 8h6v10h-6V11zm-8 4h6v6H5v-6z"/></svg>
+                      ${s.title}
+                    </a>
+                  `)}
+                </div>
+              ` : null}
+            </div>
+          ` : null}
+        </nav>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <!-- Global AI toggle pill -->
+        <button
+          onClick=${handleToggleAutoReply}
+          class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all border cursor-pointer ${
+            autoReply
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20'
+              : 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20'
+          }"
+          title="Alternar resposta automática da IA globalmente"
+        >
+          <span class="w-2 h-2 rounded-full ${autoReply ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}"></span>
+          <span>IA: ${autoReply ? 'Ativada' : 'Desativada'}</span>
+        </button>
+
+        <!-- Connection Badge -->
+        <button
+          onClick=${onOpenQR}
+          class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all border cursor-pointer ${
+            status && status.connected
+              ? 'bg-wa-teal/10 border-wa-teal/30 text-wa-teal hover:bg-wa-teal/20'
+              : 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20'
+          }"
+          title="Ver status da conexão WhatsApp e QR Code"
+        >
+          <span class="w-2 h-2 rounded-full ${status && status.connected ? 'bg-wa-teal' : 'bg-amber-500 animate-ping'}"></span>
+          <span>${status && status.connected ? (status.name || status.phone || 'Conectado') : 'Desconectado'}</span>
+        </button>
+
+        <!-- Dark mode button -->
+        <button
+          onClick=${toggleDark}
+          class="w-8 h-8 rounded-full flex items-center justify-center text-wa-secondary hover:text-wa-text hover:bg-wa-hover transition-colors cursor-pointer"
+          title=${dark ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
+        >
+          ${dark
+            ? html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0-5l2.39 3.42C13.65 5.15 12.84 5 12 5c-.84 0-1.65.15-2.39.42L12 2zM3.34 7l4.16-.35C6.84 7.28 6.31 8 5.91 8.81L3.34 7zm0 10l2.57-1.81c.4.81.93 1.53 1.59 2.16L3.34 17zM12 22l-2.39-3.42c.74.27 1.55.42 2.39.42.84 0 1.65-.15 2.39-.42L12 22zm8.66-5l-4.16.35c.66-.63 1.19-1.35 1.59-2.16L20.66 17zm0-10l-2.57 1.81c-.4-.81-.93-1.53-1.59-2.16L20.66 7z"/></svg>`
+            : html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 3a9 9 0 109 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 01-4.4 2.26 5.4 5.4 0 01-5.4-5.4c0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>`
+          }
+        </button>
+
+        <!-- Gear Menu Wrapper for Header -->
+        <${GearMenu} tab=${tab} onTabChange=${onTabChange} pluginScreens=${pluginScreens} hasPassword=${hasPassword} onLogout=${onLogout} accountUrl=${accountUrl} isHeader=${true} />
+      </div>
+    </header>
+  `;
+}
+
+function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, accountUrl, isHeader }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
 
@@ -134,10 +298,11 @@ function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, acco
   }
 
   return html`
-    <div ref=${menuRef} class="fixed top-3 right-3 z-50">
+    <div ref=${menuRef} class=${isHeader ? 'relative z-50' : 'fixed top-3 right-3 z-50 lg:hidden'}>
       <button
         onClick=${() => setOpen(!open)}
-        class="w-[36px] h-[36px] flex items-center justify-center rounded-full bg-wa-bg shadow-md border border-wa-border hover:bg-wa-hover transition-colors"
+        class="w-[36px] h-[36px] flex items-center justify-center rounded-full bg-wa-bg shadow-md border border-wa-border hover:bg-wa-hover transition-colors cursor-pointer"
+        title="Configurações e menu"
       >
         <svg viewBox="0 0 24 24" width="20" height="20" fill="#54656f">
           <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
@@ -230,6 +395,75 @@ function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, acco
   `;
 }
 
+function MobileTopBar({ tab, onTabChange, status, config, onSaveConfig, onOpenQR, pluginScreens, hasPassword, onLogout, accountUrl }) {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
+
+  function toggleDark() {
+    const next = !document.documentElement.classList.contains('dark');
+    document.documentElement.classList.toggle('dark', next);
+    try { localStorage.setItem('whatsbot_theme', next ? 'dark' : 'light'); } catch (e) {}
+    setDark(next);
+  }
+
+  const autoReply = config ? config.auto_reply !== false : true;
+
+  function handleToggleAutoReply() {
+    if (!config || !onSaveConfig) return;
+    onSaveConfig({ auto_reply: !autoReply });
+  }
+
+  return html`
+    <header class="lg:hidden flex items-center justify-between px-3 h-[52px] bg-wa-panel border-b border-wa-border shrink-0 z-40 select-none shadow-2xs">
+      <div class="flex items-center gap-2">
+        <!-- Logo & Connection Status Button -->
+        <button onClick=${onOpenQR} class="flex items-center gap-2 py-1 px-2 rounded-xl bg-wa-bg/70 border border-wa-border/80 hover:bg-wa-hover transition-colors cursor-pointer">
+          <div class="relative w-7 h-7 rounded-lg bg-gradient-to-tr from-emerald-600 via-teal-500 to-emerald-400 flex items-center justify-center text-white font-black text-xs shadow-2xs">
+            WB
+            <span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-wa-panel ${status && status.connected ? 'bg-wa-teal' : 'bg-amber-500 animate-ping'}"></span>
+          </div>
+          <div class="flex flex-col text-left leading-none">
+            <span class="font-bold text-wa-text text-[13px] tracking-tight">WhatsBot</span>
+            <span class="text-[9.5px] font-medium text-wa-secondary">
+              ${status && status.connected ? 'Online' : 'Desconectado'}
+            </span>
+          </div>
+        </button>
+      </div>
+
+      <div class="flex items-center gap-1.5">
+        <!-- Quick AI Toggle Pill -->
+        <button
+          onClick=${handleToggleAutoReply}
+          class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-all border cursor-pointer ${
+            autoReply
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+              : 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
+          }"
+          title="Alternar IA globalmente"
+        >
+          <span class="w-1.5 h-1.5 rounded-full ${autoReply ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}"></span>
+          <span>IA: ${autoReply ? 'ON' : 'OFF'}</span>
+        </button>
+
+        <!-- Dark mode button -->
+        <button
+          onClick=${toggleDark}
+          class="w-8 h-8 rounded-full flex items-center justify-center text-wa-secondary hover:text-wa-text hover:bg-wa-hover transition-colors cursor-pointer"
+          title="Alternar modo escuro"
+        >
+          ${dark
+            ? html`<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0-5l2.39 3.42C13.65 5.15 12.84 5 12 5c-.84 0-1.65.15-2.39.42L12 2zM3.34 7l4.16-.35C6.84 7.28 6.31 8 5.91 8.81L3.34 7zm0 10l2.57-1.81c.4.81.93 1.53 1.59 2.16L3.34 17zM12 22l-2.39-3.42c.74.27 1.55.42 2.39.42.84 0 1.65-.15 2.39-.42L12 22zm8.66-5l-4.16.35c.66-.63 1.19-1.35 1.59-2.16L20.66 17zm0-10l-2.57 1.81c-.4-.81-.93-1.53-1.59-2.16L20.66 7z"/></svg>`
+            : html`<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 3a9 9 0 109 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 01-4.4 2.26 5.4 5.4 0 01-5.4-5.4c0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>`
+          }
+        </button>
+
+        <!-- Gear Menu Trigger -->
+        <${GearMenu} tab=${tab} onTabChange=${onTabChange} pluginScreens=${pluginScreens} hasPassword=${hasPassword} onLogout=${onLogout} accountUrl=${accountUrl} isHeader=${true} />
+      </div>
+    </header>
+  `;
+}
+
 // Mobile bottom navigation — WhatsApp-style primary tabs, thumb-reachable.
 // A normal flex child (not `fixed`), so it never overlaps content: <main> is
 // flex-1 and shrinks to make room for it automatically. Hidden from `lg` up,
@@ -238,15 +472,18 @@ function BottomNavItem({ active, onClick, icon, badge, children }) {
   return html`
     <button
       onClick=${onClick}
-      class="flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 relative ${active ? 'text-wa-teal' : 'text-wa-secondary'}"
+      class="flex-1 flex flex-col items-center justify-center gap-1 py-1.5 relative transition-colors cursor-pointer ${
+        active ? 'text-wa-teal font-semibold' : 'text-wa-secondary hover:text-wa-text'
+      }"
     >
+      ${active ? html`<span class="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-wa-teal rounded-b-full"></span>` : null}
       <span class="relative">
         ${icon}
         ${badge ? html`
-          <span class="absolute -top-1 -right-2 min-w-[16px] h-[16px] px-[3px] rounded-full bg-wa-badge text-white text-[10px] font-bold flex items-center justify-center leading-none">${badge > 99 ? '99+' : badge}</span>
+          <span class="absolute -top-1.5 -right-2.5 min-w-[16px] h-[16px] px-[3px] rounded-full bg-wa-badge text-white text-[10px] font-bold flex items-center justify-center leading-none shadow-xs animate-pulse-slow">${badge > 99 ? '99+' : badge}</span>
         ` : null}
       </span>
-      <span class="text-[11px] font-medium leading-none">${children}</span>
+      <span class="text-[10.5px] leading-none tracking-tight">${children}</span>
     </button>
   `;
 }
@@ -254,18 +491,28 @@ function BottomNavItem({ active, onClick, icon, badge, children }) {
 function BottomNav({ tab, onTabChange, pluginScreens, unreadCount }) {
   const ordersScreen = (pluginScreens || []).find(s => s.pluginId === 'orders');
   return html`
-    <nav class="lg:hidden shrink-0 flex items-stretch bg-wa-bg border-t border-wa-border" style="padding-bottom: env(safe-area-inset-bottom)">
+    <nav class="lg:hidden shrink-0 flex items-stretch bg-wa-panel border-t border-wa-border/80 shadow-lg z-30" style="padding-bottom: env(safe-area-inset-bottom)">
       <${BottomNavItem} active=${tab === 'home'} onClick=${() => onTabChange('home')}
-        icon=${html`<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`}
+        icon=${html`<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`}
       >Início</${BottomNavItem}>
+
       <${BottomNavItem} active=${tab === 'contacts'} onClick=${() => onTabChange('contacts')} badge=${unreadCount}
-        icon=${html`<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>`}
+        icon=${html`<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>`}
       >Conversas</${BottomNavItem}>
+
+      <${BottomNavItem} active=${tab === 'dashboard'} onClick=${() => onTabChange('dashboard')}
+        icon=${html`<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>`}
+      >Painel</${BottomNavItem}>
+
       ${ordersScreen ? html`
         <${BottomNavItem} active=${tab === pluginTabId(ordersScreen)} onClick=${() => onTabChange(pluginTabId(ordersScreen))}
-          icon=${html`<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12L8.1 13h7.45c.75 0 1.41-.41 1.75-1.03L20.88 6H4.54l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>`}
+          icon=${html`<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12L8.1 13h7.45c.75 0 1.41-.41 1.75-1.03L20.88 6H4.54l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>`}
         >Pedidos</${BottomNavItem}>
       ` : null}
+
+      <${BottomNavItem} active=${tab === 'plugins' || tab === 'sandbox' || tab === 'costs' || tab === 'tools'} onClick=${() => onTabChange('plugins')}
+        icon=${html`<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`}
+      >Mais</${BottomNavItem}>
     </nav>
   `;
 }
@@ -310,6 +557,7 @@ function App({ onLogout, hasPassword }) {
   const [lowBalance, setLowBalance] = useState(null);
   const [initialContactId, setInitialContactId] = useState(contactIdFromPath);
   const [wizardManual, setWizardManual] = useState(() => window.location.pathname === '/wizard');
+  const [showQrModal, setShowQrModal] = useState(false);
   const wizardLatchRef = useRef(false);
 
   // Open/close the setup wizard, keeping the /wizard URL in sync so it can be
@@ -538,8 +786,33 @@ function App({ onLogout, hasPassword }) {
     : null;
 
   return html`
-    <div class="h-dvh overflow-hidden flex flex-col relative">
-      <${GearMenu} tab=${tab} onTabChange=${setTab} pluginScreens=${pluginScreens} hasPassword=${hasPassword} onLogout=${onLogout} accountUrl=${config && config.account_url} />
+    <div class="h-dvh overflow-hidden flex flex-col relative bg-wa-bg">
+      <${DesktopNavbar}
+        tab=${tab}
+        onTabChange=${setTab}
+        unreadCount=${unreadConvos}
+        status=${status}
+        qrAvailable=${qrAvailable}
+        config=${config}
+        onSaveConfig=${save}
+        onOpenQR=${() => setShowQrModal(true)}
+        pluginScreens=${pluginScreens}
+        hasPassword=${hasPassword}
+        onLogout=${onLogout}
+        accountUrl=${config && config.account_url}
+      />
+      <${MobileTopBar}
+        tab=${tab}
+        onTabChange=${setTab}
+        status=${status}
+        config=${config}
+        onSaveConfig=${save}
+        onOpenQR=${() => setShowQrModal(true)}
+        pluginScreens=${pluginScreens}
+        hasPassword=${hasPassword}
+        onLogout=${onLogout}
+        accountUrl=${config && config.account_url}
+      />
 
       <main key=${tab} class="flex-1 min-h-0 overflow-auto wa-tab-enter ${tab !== 'contacts' ? 'bg-wa-panel' : ''}">
         ${activePluginScreen
@@ -611,6 +884,15 @@ function App({ onLogout, hasPassword }) {
 
       <${BottomNav} tab=${tab} onTabChange=${setTab} pluginScreens=${pluginScreens} unreadCount=${unreadConvos} />
       <${Toast} message=${notification} />
+
+      ${showQrModal ? html`<${QRCodeModal}
+        connected=${status && status.connected}
+        botPhone=${status && status.phone}
+        botName=${status && status.name}
+        qrAvailable=${qrAvailable}
+        qrVersion=${qrVersion}
+        onClose=${() => setShowQrModal(false)}
+      />` : null}
 
       ${lowBalance ? html`<${LowBalanceModal}
         balance=${lowBalance.remaining}

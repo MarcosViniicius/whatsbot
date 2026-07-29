@@ -4,7 +4,7 @@
    The Tailwind `wa-*` palette resolves to these CSS variables (channel
    triplets, so opacity modifiers like bg-wa-teal/10 keep working). Light is
    the default; adding `.dark` on <html> swaps the whole app to dark mode.
-   The toggle lives in the gear menu (app.js) and persists in localStorage. */
+   The toggle lives in the top navbar / gear menu and persists in localStorage. */
 :root {
   color-scheme: light;
   --wa-teal: 0 128 105;
@@ -24,10 +24,6 @@
   --wa-badge: 37 211 102;
   --wa-icon: 84 101 111;
   --wa-iconActive: 0 128 105;
-  /* AI signal color — reserved exclusively for "the AI is active here" cues
-     (chat header toggle, attendance-queue badge, thinking pulse). Kept
-     distinct from wa-teal (brand/actions) and red (errors/urgent) so an AI
-     touchpoint is scannable at a glance across the whole app. */
   --wa-ai: 181 106 20;
 }
 
@@ -53,9 +49,20 @@ html.dark {
   --wa-ai: 224 158 61;
 }
 
+/* Base typography & smooth interactions */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 /* Smooth transitions for status indicators */
 .status-dot {
-  transition: background-color 0.3s ease;
+  transition: background-color 0.3s ease, box-shadow 0.3s ease;
 }
 
 /* QR code image styling */
@@ -66,20 +73,16 @@ html.dark {
 /* Pulse animation for loading states */
 @keyframes pulse-slow {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  50% { opacity: 0.4; }
 }
 .animate-pulse-slow {
   animation: pulse-slow 2s ease-in-out infinite;
 }
 
-/* ── "IA ativa" signature glow ──────────────────────────────────────
-   The one recurring animated motif in the app: a soft amber breathing halo
-   used ONLY on the handful of touchpoints where "is the AI live here right
-   now" is the single most important piece of information (chat header
-   toggle, attendance-queue badge). Not used decoratively elsewhere. */
+/* ── "IA ativa" signature glow ────────────────────────────────────── */
 @keyframes wa-ai-breathe {
-  0%, 100% { box-shadow: 0 0 0 0 rgb(var(--wa-ai) / 0.35); }
-  50% { box-shadow: 0 0 0 5px rgb(var(--wa-ai) / 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgb(var(--wa-ai) / 0.4); }
+  50% { box-shadow: 0 0 0 6px rgb(var(--wa-ai) / 0); }
 }
 .wa-ai-pulse {
   animation: wa-ai-breathe 2.4s ease-in-out infinite;
@@ -87,8 +90,8 @@ html.dark {
 
 /* ── Toast (visible notifications) ──────────────────────────────── */
 @keyframes wa-toast-in {
-  from { opacity: 0; transform: translate(-50%, 8px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+  from { opacity: 0; transform: translate(-50%, 12px) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
 }
 .wa-toast {
   animation: wa-toast-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
@@ -96,11 +99,11 @@ html.dark {
 
 /* ── Tab content transition ─────────────────────────────────────── */
 @keyframes wa-fade-in {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 .wa-tab-enter {
-  animation: wa-fade-in 0.18s ease-out;
+  animation: wa-fade-in 0.2s ease-out;
 }
 
 /* ── Kanban card drop feedback ───────────────────────────────────── */
@@ -118,7 +121,7 @@ html.dark {
   }
 }
 
-/* ── WhatsApp Web replica styles ──────────────────────────────── */
+/* ── WhatsApp Web replica & Modern UI styles ──────────────────────────────── */
 
 /* Incoming message tail (left, white) */
 .msg-tail-in {
@@ -153,27 +156,28 @@ html.dark {
 /* Thin scrollbar like WhatsApp */
 .wa-scrollbar::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 .wa-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
 .wa-scrollbar::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.15);
-  border-radius: 3px;
+  border-radius: 999px;
 }
 .wa-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.28);
 }
 html.dark .wa-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.18);
 }
 html.dark .wa-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.32);
 }
 
 /* Contact row hover transition */
 .wa-contact-row {
-  transition: background-color 0.15s ease;
+  transition: background-color 0.15s ease, transform 0.1s ease;
 }
 
 /* WhatsApp chat doodle background pattern */
@@ -184,7 +188,7 @@ html.dark .wa-scrollbar::-webkit-scrollbar-thumb:hover {
 
 /* WhatsApp bubble shadow */
 .wa-bubble {
-  box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+  box-shadow: 0 1px 2px rgba(11, 20, 26, 0.12);
   overflow-wrap: break-word;
   word-break: break-word;
 }
@@ -201,7 +205,7 @@ html.dark .wa-scrollbar::-webkit-scrollbar-thumb:hover {
   to { transform: translateX(0); }
 }
 .animate-slide-in-right {
-  animation: slide-in-right 0.25s ease-out;
+  animation: slide-in-right 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Brief highlight band when a message is focused from a search result */
@@ -215,15 +219,41 @@ html.dark .wa-scrollbar::-webkit-scrollbar-thumb:hover {
   animation: wa-msg-flash 3s ease-out;
 }
 
-/* ── Dark-mode fallback for raw Tailwind color utilities ──────────────────
-   Core components use the themed wa-* palette, but plugin screens — including
-   ones we don't control and ones added in the future — may use raw utilities
-   like bg-white / text-gray-* / border-gray-*. These scoped overrides re-theme
-   those whenever <html> has the `.dark` class, so ANY screen stays readable in
-   dark mode automatically. They sit at higher specificity than the base
-   utilities but use NO !important, so inline styles still win (e.g. the QR code
-   keeps its white background). Accent colors (text-white, red/green/blue/amber,
-   bg-black/ overlays) are intentionally left untouched. */
+/* ── Custom UI Pill Tabs & Filter Chips ─────────────────────── */
+.wa-pill-tab {
+  display: inline-flex;
+  items-center: center;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.wa-pill-tab-active {
+  background-color: rgb(var(--wa-teal));
+  color: #ffffff;
+  box-shadow: 0 2px 4px rgba(0, 128, 105, 0.25);
+}
+
+.wa-pill-tab-inactive {
+  background-color: rgb(var(--wa-panel));
+  color: rgb(var(--wa-secondary));
+  border: 1px solid rgb(var(--wa-border));
+}
+.wa-pill-tab-inactive:hover {
+  background-color: rgb(var(--wa-hover));
+  color: rgb(var(--wa-text));
+}
+
+/* Form fields: fixed gray surface + black text, readable in both themes. */
+.wa-field { background-color: #e5e7eb; color: #000; }
+.wa-field::placeholder { color: #6b7280; }
+
+/* ── Dark-mode fallbacks ────────────────────────────────────────────────── */
 html.dark .bg-white { background-color: rgb(var(--wa-panel)); }
 html.dark .bg-gray-50,
 html.dark .bg-gray-100 { background-color: rgb(var(--wa-panel)); }
@@ -252,11 +282,6 @@ html.dark .border-gray-300 { border-color: rgb(var(--wa-border)); }
 html.dark .placeholder-gray-400::placeholder,
 html.dark .placeholder-gray-500::placeholder { color: rgb(var(--wa-secondary)); }
 
-/* Soft accent tints (bg-green-50, border-red-200, text-amber-700, …) used for
-   selected / success / warning / error states stay LIGHT by default, so in dark
-   mode they'd show themed light text over a near-white pill = unreadable. Re-tint
-   them to a dark, translucent version of the same hue (so the card reads as a
-   subtle colored-dark surface) and lift the paired accent text to a light shade. */
 html.dark .bg-green-50, html.dark .bg-green-100 { background-color: rgba(34, 197, 94, 0.14); }
 html.dark .border-green-100, html.dark .border-green-200 { border-color: rgba(34, 197, 94, 0.40); }
 html.dark .text-green-600, html.dark .text-green-700, html.dark .text-green-800 { color: #86efac; }
@@ -289,7 +314,3 @@ html.dark .bg-pink-50, html.dark .bg-pink-100 { background-color: rgba(236, 72, 
 html.dark .border-pink-100, html.dark .border-pink-200 { border-color: rgba(236, 72, 153, 0.40); }
 html.dark .text-pink-600, html.dark .text-pink-700, html.dark .text-pink-800 { color: #f9a8d4; }
 
-/* Form fields: fixed gray surface + black text, readable in both themes.
-   A dedicated class so the dark utility overrides above never touch it. */
-.wa-field { background-color: #e5e7eb; color: #000; }
-.wa-field::placeholder { color: #6b7280; }

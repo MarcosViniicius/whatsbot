@@ -83,6 +83,7 @@ export function ContactList({ contacts, loading, search, onSearchChange, selecte
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
   const [bulkTagsOpen, setBulkTagsOpen] = useState(false);
+  const [listFilter, setListFilter] = useState('all'); // 'all' | 'unread' | 'human' | 'groups'
   const menuRef = useRef(null);
 
   // In-app confirm dialog (replaces window.confirm()). `pending` holds
@@ -283,50 +284,100 @@ export function ContactList({ contacts, loading, search, onSearchChange, selecte
       </div>
       `}
 
-      <!-- Search bar -->
-      <div class="py-[6px] px-[12px] bg-wa-bg border-b border-wa-border">
-        <div class="flex items-center bg-wa-panel rounded-lg h-[35px] px-[8px] gap-[20px]">
+      <!-- Search bar & Quick Filters -->
+      <div class="py-[6px] px-[12px] bg-wa-bg border-b border-wa-border flex flex-col gap-1.5 shrink-0">
+        <div class="flex items-center bg-wa-panel rounded-lg h-[35px] px-[10px] gap-2">
           <${SearchIcon} />
           <input
             type="text"
             placeholder="Pesquisar ou começar uma nova conversa"
             value=${search}
             onInput=${(e) => onSearchChange(e.target.value)}
-            class="bg-transparent border-none outline-none text-wa-text text-[14px] w-full placeholder-wa-secondary"
+            class="bg-transparent border-none outline-none text-wa-text text-[13.5px] w-full placeholder-wa-secondary"
           />
+          ${search ? html`
+            <button onClick=${() => onSearchChange('')} class="text-wa-secondary hover:text-wa-text text-xs p-1">✕</button>
+          ` : null}
+        </div>
+
+        <!-- Quick filter chips -->
+        <div class="flex items-center gap-1.5 overflow-x-auto wa-scrollbar py-0.5 select-none">
+          <button
+            onClick=${() => setListFilter('all')}
+            class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              listFilter === 'all' ? 'bg-wa-teal text-white shadow-2xs' : 'bg-wa-panel text-wa-secondary hover:text-wa-text border border-wa-border'
+            }"
+          >
+            Todas
+          </button>
+          <button
+            onClick=${() => setListFilter('unread')}
+            class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              listFilter === 'unread' ? 'bg-wa-teal text-white shadow-2xs' : 'bg-wa-panel text-wa-secondary hover:text-wa-text border border-wa-border'
+            }"
+          >
+            Não Lidas
+          </button>
+          <button
+            onClick=${() => setListFilter('human')}
+            class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              listFilter === 'human' ? 'bg-wa-ai text-white shadow-2xs' : 'bg-wa-panel text-wa-secondary hover:text-wa-text border border-wa-border'
+            }"
+          >
+            IA OFF
+          </button>
+          <button
+            onClick=${() => setListFilter('groups')}
+            class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              listFilter === 'groups' ? 'bg-wa-teal text-white shadow-2xs' : 'bg-wa-panel text-wa-secondary hover:text-wa-text border border-wa-border'
+            }"
+          >
+            Grupos
+          </button>
         </div>
       </div>
 
       <!-- Contact rows -->
       <div class="flex-1 overflow-y-auto wa-scrollbar bg-wa-bg">
-        ${loading && contacts.length === 0
-          ? html`<div class="text-center text-wa-secondary py-8 animate-pulse-slow text-[14px]">Carregando...</div>`
-          : contacts.length === 0
-            ? html`<div class="text-center py-8 px-4">
-                <div class="text-wa-secondary text-[14px]">Nenhum contato encontrado</div>
-                ${search && looksLikePhone(search) ? html`
-                  <div class="mt-4">
-                    ${checkingPhone
-                      ? html`<div class="text-wa-secondary text-[13px] animate-pulse-slow">
-                          Verificando se o número possui WhatsApp...
-                        </div>`
-                      : checkPhoneError
-                        ? html`<div class="text-red-400 text-[13px] mb-2">${checkPhoneError}</div>
-                               <button
-                                 onClick=${() => onStartConversation(normalizePhone(search))}
-                                 class="text-wa-teal text-[13px] hover:underline cursor-pointer"
-                               >Tentar novamente</button>`
-                        : html`<button
-                            onClick=${() => onStartConversation(normalizePhone(search))}
-                            class="mt-2 px-4 py-[6px] bg-wa-teal/10 text-wa-teal text-[13px] rounded-lg hover:bg-wa-teal/20 transition-colors cursor-pointer border border-wa-teal/30"
-                          >
-                            Iniciar conversa com ${formatPhoneDisplay(normalizePhone(search))}
-                          </button>`
-                    }
-                  </div>
-                ` : null}
-              </div>`
-            : contacts.map(c => html`
+        ${(() => {
+          const filteredContacts = (contacts || []).filter(c => {
+            if (listFilter === 'unread') return (c.unread_count > 0 || c.unread_ai_count > 0);
+            if (listFilter === 'human') return c.ai_enabled === false;
+            if (listFilter === 'groups') return c.is_group === true;
+            return true;
+          });
+
+          if (loading && contacts.length === 0) {
+            return html`<div class="text-center text-wa-secondary py-8 animate-pulse-slow text-[14px]">Carregando...</div>`;
+          }
+          if (filteredContacts.length === 0) {
+            return html`<div class="text-center py-8 px-4">
+              <div class="text-wa-secondary text-[14px]">Nenhum contato encontrado ${listFilter !== 'all' ? 'neste filtro' : ''}</div>
+              ${search && looksLikePhone(search) ? html`
+                <div class="mt-4">
+                  ${checkingPhone
+                    ? html`<div class="text-wa-secondary text-[13px] animate-pulse-slow">
+                        Verificando se o número possui WhatsApp...
+                      </div>`
+                    : checkPhoneError
+                      ? html`<div class="text-red-400 text-[13px] mb-2">${checkPhoneError}</div>
+                             <button
+                               onClick=${() => onStartConversation(normalizePhone(search))}
+                               class="text-wa-teal text-[13px] hover:underline cursor-pointer"
+                             >Tentar novamente</button>`
+                      : html`<button
+                          onClick=${() => onStartConversation(normalizePhone(search))}
+                          class="mt-2 px-4 py-[6px] bg-wa-teal/10 text-wa-teal text-[13px] rounded-lg hover:bg-wa-teal/20 transition-colors cursor-pointer border border-wa-teal/30"
+                        >
+                          Iniciar conversa com ${formatPhoneDisplay(normalizePhone(search))}
+                        </button>`
+                  }
+                </div>
+              ` : null}
+            </div>`;
+          }
+
+          return filteredContacts.map(c => html`
                 <div
                   key=${c.phone}
                   onClick=${() => selectionMode ? onToggleSelect(c.phone) : onSelect(c.phone, c.match_msg_id)}
@@ -438,8 +489,8 @@ export function ContactList({ contacts, loading, search, onSearchChange, selecte
                     </div>
                   </div>
                 </div>
-              `)
-        }
+              `);
+        })()}
       </div>
       <${ConfirmDialog}
         open=${!!pendingConfirm}
