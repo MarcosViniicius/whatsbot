@@ -55,8 +55,34 @@ def get_all(contact_id: int) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
+# Split-message replies (split_messages=True, the default) save each WhatsApp
+# bubble as its own row within milliseconds of each other — see
+# server/routes/webhook.py `_send_reply`'s "save each part as a separate
+# message" loop, which writes all parts back-to-back with no delay after
+# sending. Measured in production: a 6-bubble reply had its rows span ~22ms.
+# Without turn-grouping, get_context's row limit could be entirely consumed by
+# ONE multi-bubble AI reply, pushing the actual order details out of context
+# after just one or two exchanges (confirmed: a customer's item list fell out
+# of a 10-row window after the very next AI turn). Rows within this many
+# seconds of each other, same role, count as one turn against `limit`.
+_TURN_GAP_SECONDS = 3.0
+
+# Safety cap on how many raw rows we'll scan to assemble `limit` turns, so a
+# very long-lived contact's full history is never pulled into memory just to
+# find the last few turns. Generous relative to typical reply sizes (rarely
+# > 10 bubbles), so it should almost never under-fill in practice.
+_MAX_SCAN_ROWS = 500
+
+
 def get_context(contact_id: int, limit: int) -> list[dict]:
-    """Return the last N eligible messages for LLM context."""
+    """Return the last N conversational TURNS (not raw rows) for LLM context.
+
+    A "turn" is one or more consecutive same-role rows saved within
+    ``_TURN_GAP_SECONDS`` of each other — i.e. one AI reply split into several
+    WhatsApp bubbles counts as ONE turn against ``limit``, matching what a
+    person actually perceives as "one message" instead of quietly shrinking
+    the model's effective memory by the split factor.
+    """
     # `system` = system-event messages (e.g. improvement analyses) that signal
     # something happened but are NOT meant for the AI to read. Kept out of the
     # LLM context here so they never leak into a reply.
@@ -70,9 +96,33 @@ def get_context(contact_id: int, limit: int) -> list[dict]:
                 & ((messages.c.status.is_(None)) | (messages.c.status != "failed"))
             )
             .order_by(messages.c.ts.desc())
-            .limit(limit)
+            .limit(max(_MAX_SCAN_ROWS, limit * 25))
         ).mappings().all()
-    return [_row_to_dict(r) for r in reversed(rows)]
+
+    # `rows` is newest-first. Walk forward, grouping consecutive same-role
+    # rows within the gap threshold into a turn; stop STARTING new turns once
+    # `limit` is reached (a turn already in progress may still grow, so it's
+    # never split across the boundary).
+    turns: list[list] = []
+    prev_ts = None
+    prev_role = None
+    for row in rows:
+        same_turn = (
+            turns
+            and row["role"] == prev_role
+            and prev_ts is not None
+            and (prev_ts - row["ts"]) <= _TURN_GAP_SECONDS
+        )
+        if same_turn:
+            turns[-1].append(row)
+        else:
+            if len(turns) >= limit:
+                break
+            turns.append([row])
+        prev_ts, prev_role = row["ts"], row["role"]
+
+    flat = [r for turn in reversed(turns) for r in reversed(turn)]
+    return [_row_to_dict(r) for r in flat]
 
 
 def get_last(contact_id: int) -> dict | None:
@@ -93,6 +143,27 @@ def get_last_user_message(contact_id: int) -> dict | None:
         row = conn.execute(
             select(messages)
             .where((messages.c.contact_id == contact_id) & (messages.c.role == "user"))
+            .order_by(messages.c.ts.desc())
+            .limit(1)
+        ).mappings().first()
+    return _row_to_dict(row) if row else None
+
+
+def get_last_operator_message(contact_id: int) -> dict | None:
+    """Return the most recent human-operator-sent message (role=assistant, status=operator).
+
+    Used by the AI auto-resume check (server/background.py) to anchor the
+    "attendant went quiet" timeout — distinct from AI-sent assistant messages
+    (status='sent'/'delivered'/'read'), which don't count as human activity.
+    """
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(messages)
+            .where(
+                (messages.c.contact_id == contact_id)
+                & (messages.c.role == "assistant")
+                & (messages.c.status == "operator")
+            )
             .order_by(messages.c.ts.desc())
             .limit(1)
         ).mappings().first()
