@@ -856,7 +856,7 @@ function App({ onLogout, hasPassword }) {
                   />
                 </div>`
               : tab === 'home'
-                ? html`<div class="max-w-7xl mx-auto p-4 h-full">
+                ? html`<div class="w-full max-w-none p-2 sm:p-3 lg:p-4 h-full">
                     <${OperationalDashboard} pluginScreens=${pluginScreens} newMessage=${newMessage} messagesRead=${messagesRead} contactAiToggled=${contactAiToggled} config=${config} />
                   </div>`
               : tab === 'contacts'

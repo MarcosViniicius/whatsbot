@@ -13,10 +13,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-STATUSES = (
-    "new", "awaiting_confirmation", "separating", "separated",
-    "out_for_delivery", "delivered", "cancelled",
-)
+STATUSES = ("new", "processing", "out_for_delivery", "delivered", "cancelled")
 
 _EDITABLE_FIELDS = (
     "contact_name", "items", "notes", "payment_method", "payment_status",

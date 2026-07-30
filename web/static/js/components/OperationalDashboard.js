@@ -34,14 +34,14 @@ function formatMoney(value) {
 // wall of identical white cards.
 function StatCard({ label, value, hint, accent, bar, icon }) {
   return html`
-    <div class="relative bg-wa-panel rounded-2xl pl-4 pr-3 py-3 border border-wa-border/80 shadow-2xs flex items-start justify-between gap-2 min-w-0 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
+    <div class="relative bg-wa-panel rounded-2xl pl-3.5 pr-3 py-2.5 border border-wa-border shadow-2xs flex items-center justify-between gap-2 min-w-0 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
       <span class="absolute left-0 top-0 bottom-0 w-[4px] ${bar || 'bg-wa-teal'}"></span>
-      <div class="flex flex-col gap-1 min-w-0 flex-1">
-        <span class="text-[11px] font-semibold text-wa-secondary uppercase tracking-wider leading-snug line-clamp-1">${label}</span>
-        <span class="text-2xl font-bold tabular-nums leading-none tracking-tight ${accent || 'text-wa-text'}">${value}</span>
-        ${hint ? html`<span class="text-xs text-wa-secondary leading-none">${hint}</span>` : null}
+      <div class="flex flex-col gap-0.5 min-w-0 flex-1">
+        <span class="text-[10px] sm:text-[11px] font-bold text-wa-secondary uppercase tracking-wider leading-tight line-clamp-2" title="${label}">${label}</span>
+        <span class="text-xl sm:text-2xl font-extrabold tabular-nums leading-none tracking-tight ${accent || 'text-wa-text'}">${value}</span>
+        ${hint ? html`<span class="text-[10px] text-wa-secondary leading-none">${hint}</span>` : null}
       </div>
-      ${icon ? html`<div class="shrink-0 p-2 rounded-xl bg-wa-hover/60 text-wa-secondary mt-0.5">${icon}</div>` : null}
+      ${icon ? html`<div class="shrink-0 p-2 rounded-xl bg-wa-hover/70 text-wa-secondary">${icon}</div>` : null}
     </div>
   `;
 }
@@ -144,7 +144,8 @@ export function OperationalDashboard({ pluginScreens, newMessage, messagesRead, 
   useEffect(() => {
     if (!ordersScreen) return;
     let cancelled = false;
-    import(ordersScreen.component).then((mod) => {
+    const url = ordersScreen.component + (ordersScreen.component.includes('?') ? '&' : '?') + 'v=' + Date.now();
+    import(url).then((mod) => {
       if (!cancelled) setOrdersComponent(() => mod.default);
     }).catch(() => setOrdersAvailable(false));
     return () => { cancelled = true; };
@@ -163,7 +164,7 @@ export function OperationalDashboard({ pluginScreens, newMessage, messagesRead, 
     : queueAll;
 
   return html`
-    <div class="flex flex-col gap-3.5 h-full p-3 lg:p-4 pb-4">
+    <div class="flex flex-col gap-2.5 h-full p-1 sm:p-2 lg:p-3 pb-2 w-full max-w-none overflow-x-hidden">
       <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
         <${StatCard} label="Conversas abertas" value=${loadingContacts ? '…' : openConvos.length} bar="bg-wa-teal" icon=${_ICON.chat} />
         <${StatCard} label="Precisam de atendente" value=${loadingContacts ? '…' : needsHumanConvos.length} accent=${needsHumanConvos.length > 0 ? 'text-wa-ai' : ''} bar="bg-wa-ai" icon=${_ICON.hand} />
@@ -173,8 +174,8 @@ export function OperationalDashboard({ pluginScreens, newMessage, messagesRead, 
         <${StatCard} label="Entregues hoje" value=${orderStats ? orderStats.delivered_today_count : '—'} accent="text-emerald-500" bar="bg-emerald-500" icon=${_ICON.check} />
       </div>
 
-      <div class="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-4 flex-1 min-h-0">
-        <div class="bg-wa-panel rounded-2xl border border-wa-border p-3.5 h-[65vh] xl:h-auto xl:min-h-[440px] flex flex-col shadow-2xs">
+      <div class="grid grid-cols-1 xl:grid-cols-[1fr_260px] gap-4 flex-1 min-h-0 w-full overflow-hidden">
+        <div class="bg-wa-panel rounded-2xl border border-wa-border p-3.5 min-h-[550px] flex-1 flex flex-col shadow-2xs overflow-hidden w-full">
           ${!ordersScreen
             ? html`
               <div class="flex-1 flex flex-col items-center justify-center text-center gap-2.5 text-wa-secondary p-6">

@@ -22,10 +22,10 @@ _CLOSED_STATUSES = ("delivered", "cancelled")
 
 _STATUS_LABELS = {
     "new": "novo",
-    "awaiting_confirmation": "aguardando confirmação",
-    "separating": "separando",
-    "separated": "separado",
-    "out_for_delivery": "saiu para entrega",
+    "processing": "em processamento",
+    "out_for_delivery": "em entrega",
+    "delivered": "entregue",
+    "cancelled": "cancelado",
 }
 
 # Quantos pedidos em aberto no máximo entram no resumo — mantém o prompt
